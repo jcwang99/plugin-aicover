@@ -1,0 +1,19 @@
+apiVersion: v1alpha1
+kind: Setting
+metadata:
+  # 这是设置资源的唯一名称
+  name: ai-cover-settings
+spec:
+  forms:
+    # 'group' 是非常重要的标识符，Java 代码将通过它来获取设置值
+    - group: api-settings
+      label: API 设置
+      formSchema:
+        - $formkit: text
+          name: apiKey
+          key: apiKey
+          id: apiKey
+          label: 阿里云百炼 API-KEY
+          placeholder: "请输入您的阿里云百炼 API-KEY"
+          help: "用于调用阿里云百炼文生图服务的凭证。"
+          validation: required
