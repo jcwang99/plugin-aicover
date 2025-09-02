@@ -17,3 +17,12 @@ spec:
           placeholder: "请输入您的阿里云百炼 API-KEY"
           help: "用于调用阿里云百炼文生图服务的凭证。"
           validation: required
+        - $formkit: textarea
+          name: models
+          key: models
+          id: models
+          label: 可用模型列表
+          placeholder: "一行一个模型，格式为：显示名称,模型ID"
+          help: "例如：通义万相 V1,wanx-v1"
+          # 提供一个默认值
+          value: "通义万相 V1,wanx-v1"          

@@ -19,8 +19,12 @@
           <div class="ai-cover-form-group">
             <label for="ai-cover-model">选择模型</label>
             <select id="ai-cover-model" class="ai-cover-select" v-model="model">
-              <option value="wanx-v1">通义万相 V1</option>
-              <!-- 在此可以添加更多模型选项 -->
+              <option v-for="m in availableModels" :key="m.id" :value="m.id">
+                {{ m.name }}
+              </option>
+              <option v-if="!availableModels.length" value="" disabled>
+                加载中...
+              </option>
             </select>
           </div>
           <div class="ai-cover-form-group">
@@ -71,37 +75,61 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 
-// 定义组件接收的属性 (props) 和发出的事件 (emits)
 const props = defineProps<{
   visible: boolean;
 }>();
 
 const emit = defineEmits(['close', 'use-image']);
 
-// 组件内部状态
 const prompt = ref('');
-const model = ref('wanx-v1');
+const model = ref('');
 const size = ref('1024*1024');
 const isLoading = ref(false);
 const previewUrl = ref('');
 const error = ref('');
+const availableModels = ref<{name: string, id: string}[]>([]);
 
-// 关闭弹窗
+// 在组件挂载时，从后端获取模型列表
+onMounted(async () => {
+  // --- 核心 Debug 信息 ---
+  console.log("[Debug Frontend] AiCoverModal 组件已挂载 (onMounted hook triggered)。");
+  
+  try {
+    console.log("[Debug Frontend] 准备发送 fetch 请求到 /api/plugins/aicover/models");
+    const response = await fetch('/api/plugins/aicover/models');
+    console.log("[Debug Frontend] Fetch 请求已发送，收到的响应状态为:", response.status);
+
+    if (!response.ok) {
+      throw new Error(`获取模型列表失败，状态码: ${response.status}`);
+    }
+    const modelsData = await response.json();
+    console.log("[Debug Frontend] 成功解析模型数据:", modelsData);
+
+    availableModels.value = modelsData;
+    if (modelsData.length > 0) {
+      model.value = modelsData[0].id;
+    }
+  } catch (err: any) {
+    console.error("[Debug Frontend] 加载 AI 模型列表失败:", err);
+    error.value = `加载模型列表失败: ${err.message}`;
+    availableModels.value = [{ name: '默认模型 (加载失败)', id: 'wanx-v1' }];
+    model.value = 'wanx-v1';
+  }
+});
+
 const closeModal = () => {
   if (!isLoading.value) {
     emit('close');
   }
 };
 
-// 使用图片
 const useImage = () => {
   emit('use-image', previewUrl.value);
   closeModal();
 };
 
-// 调用后端 API 生成图片
 const generateImage = async () => {
   if (!prompt.value) {
     alert("请输入提示词！");
@@ -122,19 +150,13 @@ const generateImage = async () => {
         size: size.value 
       }),
     });
-
-    // --- 核心修正 ---
-    // 后端返回的 JSON 结构为 { "imageUrl": "..." }
-    // 我们需要直接解析这个结构，而不是一个复杂嵌套的结构。
     
     if (!response.ok) {
-      // 尝试解析后端返回的错误信息 { "message": "..." }
       const errorData = await response.json().catch(() => ({ message: `HTTP 错误! 状态码: ${response.status}` }));
       throw new Error(errorData.message || `HTTP 错误! 状态码: ${response.status}`);
     }
     
     const result = await response.json();
-    
     const imageUrl = result.imageUrl;
 
     if (!imageUrl) {
@@ -153,7 +175,7 @@ const generateImage = async () => {
 </script>
 
 <style scoped>
-/* --- 新增过渡动画 --- */
+/* (样式代码与之前相同，为简洁省略) */
 .modal-fade-enter-active,
 .modal-fade-leave-active {
   transition: opacity 0.3s ease;
@@ -170,8 +192,6 @@ const generateImage = async () => {
 .modal-fade-leave-to .ai-cover-modal-content {
   transform: scale(0.95);
 }
-/* --- 结束 --- */
-
 .ai-cover-modal-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;

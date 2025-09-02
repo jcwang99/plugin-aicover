@@ -1,130 +1,124 @@
 import { createApp, h, ref } from 'vue'
 import AiCoverModal from './views/components/AiCoverModal.vue'
 
-// 标记，用于防止在我们用代码自动点击按钮时，陷入无限循环
-let isProceedingWithCover = false;
+/**
+ * --- 全新设计 ---
+ * 这个脚本不再拦截“发布”按钮。
+ * 它的新任务是：
+ * 1. 持续观察页面，等待“封面图”输入框出现。
+ * 2. 在输入框旁边注入一个“AI 生成”按钮。
+ * 3. 点击这个新按钮时，弹出 AI 封面生成窗口。
+ * 4. 自动处理 SPA 导航，当用户离开再回来时，能重新注入按钮。
+ */
+
+// 全局变量，用于存储 Vue 弹窗的 show/hide 控制函数
+let showModal: ((visible: boolean) => void) | null = null;
 
 /**
- * --- 新增功能 ---
- * 注入 CSS 修复，强制使弹窗可见。
- * 这可以解决因组件内部样式（如 opacity: 0）导致弹窗不可见的问题。
+ * 寻找“封面图”输入框所在的容器。
+ * 我们需要找到 '.formkit-inner' 以便在其中注入按钮。
+ * @returns {HTMLElement | null}
  */
-function injectStyleFix() {
-    const styleId = 'ai-cover-style-fix';
-    if (document.getElementById(styleId)) return;
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.innerHTML = `
-        .ai-cover-modal-overlay {
-            opacity: 1 !important;
-            transition: opacity 0.3s ease !important;
-            background-color: rgba(0, 0, 0, 0.6) !important;
-        }
-    `;
-    document.head.appendChild(style);
-    console.log("[Debug] 已注入弹窗可见性修复样式。");
-}
-
-
-/**
- * 寻找文章设置中的“封面”输入框 (Debug Mode)
- */
-function findCoverInput(): HTMLInputElement | null {
-  console.groupCollapsed('[Debug] 正在查找 "封面" 输入框...');
-
-  // 根据您的提示，我们将搜索范围限定在设置弹窗/面板内。
-  const settingsPanel = document.querySelector('.modal-content, .post-settings-panel');
-  const searchContext = settingsPanel || document;
-
-  if (settingsPanel) {
-      console.log("已将搜索范围限定在设置面板内:", settingsPanel);
-  } else {
-      console.log("未找到特定设置面板，将在整个文档范围内搜索。");
+function findCoverInputContainer(): HTMLElement | null {
+  const coverInput = document.querySelector('input[name="cover"]') as HTMLInputElement | null;
+  if (coverInput) {
+    // 根据用户提供的 HTML 结构，按钮应该被注入到这个 div 中
+    return coverInput.closest('.formkit-inner');
   }
-
-  // 策略 0: 直接通过 name="cover" 查找，这通常最可靠
-  const directInput = searchContext.querySelector('input[name="cover"]') as HTMLInputElement | null;
-  if (directInput) {
-    console.log(`%c🎉 成功: 已通过 'name="cover"' 属性直接找到输入框!`, 'color: green; font-weight: bold;', directInput);
-    console.groupEnd();
-    return directInput;
-  }
-  console.log("...通过 name='cover' 直接查找失败，继续使用 label 策略。");
-
-
-  const labels = Array.from(searchContext.querySelectorAll("label, .formkit-label"));
-  console.log(`在当前范围内共找到 ${labels.length} 个潜在的 label 元素。`);
-  
-  // 策略 1: 查找文本完全匹配 "封面图" 的 label
-  const coverLabel = labels.find(label => {
-    const text = label.textContent?.trim();
-    if (text === "封面图") {
-      console.log(`%c🎉 找到一个文本为 "封面图" 的 label:`, 'color: green;', label);
-      return true;
-    }
-    return false;
-  });
-  
-  if (coverLabel) {
-    // 策略 1a: 通过 "for" 属性查找
-    const inputId = coverLabel.getAttribute("for");
-    console.log(`Label 的 "for" 属性是: ${inputId}`);
-    if (inputId) {
-      const inputElement = document.getElementById(inputId);
-      console.log(`通过 ID "${inputId}" 找到的元素是:`, inputElement);
-      if (inputElement instanceof HTMLInputElement) {
-        console.log("%c成功: 已通过 'for' 属性策略找到输入框!", "color: green; font-weight: bold;");
-        console.groupEnd();
-        return inputElement;
-      }
-    }
-
-    // 策略 1b: 通过父级元素遍历查找
-    console.log("正在尝试父级元素遍历策略...");
-    const parent = coverLabel.closest('.formkit-wrapper, div.form-item, div.form-group, .formkit-outer');
-    console.log("找到的最接近的父容器是:", parent);
-    if (parent) {
-      const input = parent.querySelector('input[type="text"], input[type="url"]') as HTMLInputElement | null;
-      console.log("在父容器内找到的 input 是:", input);
-      if (input) {
-          console.log("%c成功: 已通过父级元素遍历策略找到输入框!", "color: green; font-weight: bold;");
-          console.groupEnd();
-          return input;
-      }
-    }
-  } else {
-      console.log('%c...在当前范围内未找到任何包含 "封面图" 的 label。', 'color: orange;');
-  }
-
-  console.warn("AI Cover 插件：未能定位到封面输入框。");
-  console.groupEnd();
   return null;
 }
 
 /**
- * 寻找“发布”或“更新”按钮
+ * 注入按钮所需的 CSS 动画和样式。
+ * 这个函数只会执行一次。
  */
-function findPublishButton(): HTMLButtonElement | null {
-    const buttons = document.querySelectorAll<HTMLButtonElement>('button');
-    for (const button of buttons) {
-        const text = button.textContent?.trim();
-        if ((text === '发布' || text === '更新') && !button.disabled) {
-             return button;
-        }
+function injectAiButtonStyles() {
+  const styleId = 'ai-cover-button-styles';
+  if (document.getElementById(styleId)) {
+    return;
+  }
+  const style = document.createElement('style');
+  style.id = styleId;
+  style.innerHTML = `
+    @keyframes gradient-animation {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
     }
-    return null;
+
+    #ai-cover-trigger-btn {
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 16px;
+      border: none;
+      border-left: 1px solid #e5e7eb;
+      background-color: transparent;
+      font-weight: 600;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+      
+      /* Gradient Text Styling */
+      background-image: linear-gradient(-45deg, #a881ff, #66a6ff, #89f7fe, #e178ff);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: gradient-animation 5s ease infinite;
+    }
+
+    #ai-cover-trigger-btn:hover {
+      transform: scale(1.05);
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+
+/**
+ * 创建并注入“AI 生成”按钮
+ * @param {HTMLElement} container - 封面图输入框的容器
+ */
+function injectAiButton(container: HTMLElement) {
+  // 如果按钮已经存在，则不重复注入
+  if (document.getElementById('ai-cover-trigger-btn')) {
+    return;
+  }
+
+  console.log("AI Cover 插件：找到封面图容器，正在注入'AI'按钮...");
+
+  const button = document.createElement('button');
+  button.id = 'ai-cover-trigger-btn';
+  button.type = 'button'; // 防止触发表单提交
+  button.innerHTML = 'AI'; // 移除了图标
+  button.title = 'AI 生成封面图';
+
+  // 为按钮添加点击事件，用于弹出窗口
+  button.addEventListener('click', () => {
+    if (showModal) {
+      console.log("AI Cover 插件：'AI'按钮被点击，正在打开弹窗...");
+      showModal(true);
+    } else {
+      console.error("AI Cover 插件：弹窗尚未初始化。");
+    }
+  });
+
+  // 将按钮注入到容器中
+  container.appendChild(button);
 }
 
 /**
- * 创建并挂载 Vue 应用，该应用负责管理弹窗
+ * 创建并挂载 Vue 弹窗应用。
+ * 这个函数只应被调用一次。
  */
-function setupModal(publishButton: HTMLButtonElement) {
-  let container = document.getElementById("ai-cover-modal-container");
-  if (container) {
-      document.body.removeChild(container);
+function setupModal() {
+  if (document.getElementById("ai-cover-modal-container")) {
+    return;
   }
 
-  container = document.createElement("div");
+  const container = document.createElement("div");
   container.id = "ai-cover-modal-container";
   document.body.appendChild(container);
 
@@ -133,17 +127,13 @@ function setupModal(publishButton: HTMLButtonElement) {
   const App = {
     setup() {
       const handleUseImage = (imageUrl: string) => {
-        const coverInput = findCoverInput();
+        const coverInput = document.querySelector('input[name="cover"]') as HTMLInputElement | null;
         if (coverInput) {
           coverInput.value = imageUrl;
           coverInput.dispatchEvent(new Event('input', { bubbles: true }));
           coverInput.dispatchEvent(new Event('change', { bubbles: true }));
+          console.log("AI Cover: 封面已自动回填。");
           isModalVisible.value = false;
-
-          setTimeout(() => {
-            isProceedingWithCover = true;
-            publishButton.click();
-          }, 100);
         } else {
           alert("未能找到封面输入框，请手动复制图片链接。");
         }
@@ -162,10 +152,10 @@ function setupModal(publishButton: HTMLButtonElement) {
     },
   };
 
-  const app = createApp(App);
-  app.mount(container);
+  createApp(App).mount(container);
 
-  return (visible: boolean) => {
+  // 将控制函数暴露到全局
+  showModal = (visible: boolean) => {
     isModalVisible.value = visible;
   };
 }
@@ -174,52 +164,18 @@ function setupModal(publishButton: HTMLButtonElement) {
  * 插件初始化函数
  */
 function initializePlugin() {
-    console.log("✅ AI Cover Plugin (Vite): 脚本已加载，正在初始化 (Debug Mode)...");
+    console.log("✅ AI Cover Plugin (Vite): 脚本已加载，开始持续监控页面...");
 
-    injectStyleFix(); // 在初始化时注入样式修复
+    // 首次加载时，先挂载 Vue 弹窗实例和按钮样式
+    setupModal();
+    injectAiButtonStyles();
 
+    // 使用 MutationObserver 持续监控 DOM 变化
     const observer = new MutationObserver(() => {
-        const publishButton = findPublishButton();
-
-        if (publishButton) {
-            console.log("%c🎉 成功定位到发布/更新按钮!", "color: green; font-weight: bold;", publishButton);
-            
-            observer.disconnect();
-            console.log("...观察者已停止。");
-
-            const showModal = setupModal(publishButton);
-
-            publishButton.addEventListener("click", (event) => {
-                if (isProceedingWithCover) {
-                    isProceedingWithCover = false;
-                    return;
-                }
-                
-                // --- 核心修正 ---
-                // 我们不再需要 setTimeout，因为 preventDefault 必须同步调用。
-                // 我们现在假设点击“发布”按钮后，设置面板的内容已经或即将
-                // 在同一个事件循环内出现在 DOM 中，使得同步查找成为可能。
-
-                const coverInput = findCoverInput();
-
-                if (coverInput && !coverInput.value) {
-                    console.log("AI Cover 插件：检测到封面为空，已拦截发布操作。");
-                    event.preventDefault();
-                    event.stopPropagation();
-                    showModal(true);
-                } else if (!coverInput) {
-                    // 如果同步找不到，我们做一个延迟尝试作为备用方案
-                     setTimeout(() => {
-                        const coverInputRetry = findCoverInput();
-                        if (coverInputRetry && !coverInputRetry.value) {
-                           showModal(true);
-                        }
-                     }, 100);
-                } else {
-                    console.log("[Debug] 封面输入框有值，不进行拦截。值为:", coverInput.value);
-                }
-
-            }, true);
+        // 每次 DOM 变化时，都尝试寻找容器并注入按钮
+        const coverInputContainer = findCoverInputContainer();
+        if (coverInputContainer) {
+            injectAiButton(coverInputContainer);
         }
     });
 
