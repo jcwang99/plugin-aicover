@@ -57,7 +57,12 @@
 
         <div v-if="previewUrl" id="ai-cover-preview-container" class="ai-cover-preview">
           <p>生成结果预览:</p>
-          <img id="ai-cover-preview-img" :src="previewUrl" alt="AI 生成图片预览">
+          <img 
+            id="ai-cover-preview-img" 
+            :src="previewUrl" 
+            alt="AI 生成图片预览"
+            @click="isImageZoomed = true"
+          >
           <div class="ai-cover-actions">
             <button 
               id="ai-cover-use-image-btn" 
@@ -72,64 +77,70 @@
       </div>
     </div>
   </Transition>
+
+  <!-- --- 新增功能：图片放大预览 --- -->
+  <Transition name="modal-fade">
+    <div v-if="isImageZoomed" class="image-zoom-overlay" @click="isImageZoomed = false">
+      <img :src="previewUrl" class="zoomed-image" alt="放大的 AI 图片">
+    </div>
+  </Transition>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 
+// 定义组件接收的属性 (props) 和发出的事件 (emits)
 const props = defineProps<{
   visible: boolean;
 }>();
 
 const emit = defineEmits(['close', 'use-image']);
 
+// 组件内部状态
 const prompt = ref('');
-const model = ref('');
+const model = ref(''); 
 const size = ref('1024*1024');
 const isLoading = ref(false);
 const previewUrl = ref('');
 const error = ref('');
 const availableModels = ref<{name: string, id: string}[]>([]);
+const isImageZoomed = ref(false); // 新增状态，用于控制图片放大显示
 
 // 在组件挂载时，从后端获取模型列表
 onMounted(async () => {
-  // --- 核心 Debug 信息 ---
-  console.log("[Debug Frontend] AiCoverModal 组件已挂载 (onMounted hook triggered)。");
-  
   try {
-    console.log("[Debug Frontend] 准备发送 fetch 请求到 /api/plugins/aicover/models");
     const response = await fetch('/api/plugins/aicover/models');
-    console.log("[Debug Frontend] Fetch 请求已发送，收到的响应状态为:", response.status);
-
     if (!response.ok) {
-      throw new Error(`获取模型列表失败，状态码: ${response.status}`);
+      throw new Error('获取模型列表失败');
     }
     const modelsData = await response.json();
-    console.log("[Debug Frontend] 成功解析模型数据:", modelsData);
-
     availableModels.value = modelsData;
     if (modelsData.length > 0) {
       model.value = modelsData[0].id;
     }
-  } catch (err: any) {
-    console.error("[Debug Frontend] 加载 AI 模型列表失败:", err);
-    error.value = `加载模型列表失败: ${err.message}`;
+  } catch (err) {
+    console.error("加载 AI 模型列表失败:", err);
+    error.value = "加载模型列表失败，请检查插件设置。";
     availableModels.value = [{ name: '默认模型 (加载失败)', id: 'wanx-v1' }];
     model.value = 'wanx-v1';
   }
 });
 
+
+// 关闭弹窗
 const closeModal = () => {
   if (!isLoading.value) {
     emit('close');
   }
 };
 
+// 使用图片
 const useImage = () => {
   emit('use-image', previewUrl.value);
   closeModal();
 };
 
+// 调用后端 API 生成图片
 const generateImage = async () => {
   if (!prompt.value) {
     alert("请输入提示词！");
@@ -175,7 +186,6 @@ const generateImage = async () => {
 </script>
 
 <style scoped>
-/* (样式代码与之前相同，为简洁省略) */
 .modal-fade-enter-active,
 .modal-fade-leave-active {
   transition: opacity 0.3s ease;
@@ -192,6 +202,7 @@ const generateImage = async () => {
 .modal-fade-leave-to .ai-cover-modal-content {
   transform: scale(0.95);
 }
+
 .ai-cover-modal-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -210,6 +221,10 @@ const generateImage = async () => {
   box-shadow: 0 5px 20px rgba(0,0,0,0.25);
   width: 90%;
   max-width: 550px;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 .ai-cover-modal-title {
   margin-top: 0;
@@ -217,14 +232,17 @@ const generateImage = async () => {
   font-size: 1.5rem;
   color: #1a1a1a;
   text-align: center;
+  flex-shrink: 0;
 }
 .ai-cover-form-group {
   margin-bottom: 16px;
   flex: 1;
+  flex-shrink: 0;
 }
 .ai-cover-form-group-inline {
   display: flex;
   gap: 16px;
+  flex-shrink: 0;
 }
 .ai-cover-form-group label {
   display: block;
@@ -250,6 +268,7 @@ const generateImage = async () => {
   margin-top: 24px;
   display: flex;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 .ai-cover-button {
   padding: 10px 20px;
@@ -285,21 +304,49 @@ const generateImage = async () => {
 .ai-cover-preview {
   margin-top: 24px;
   text-align: center;
+  flex-shrink: 0;
 }
 .ai-cover-preview img {
   max-width: 100%;
+  max-height: 50vh;
+  object-fit: contain;
   border-radius: 8px;
   border: 1px solid #ddd;
   margin-top: 8px;
+  display: inline-block; /* 确保图片居中 */
+  cursor: zoom-in; /* 提示用户图片可点击放大 */
 }
 .ai-cover-loading, .ai-cover-error-text {
   margin-top: 24px;
   text-align: center;
   color: #555;
+  flex-shrink: 0;
 }
 .ai-cover-error-text {
   color: #d9534f;
   font-weight: 500;
+}
+
+/* --- 新增样式：图片放大预览 --- */
+.image-zoom-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000; /* 确保在最顶层 */
+  cursor: zoom-out;
+}
+.zoomed-image {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+  box-shadow: 0 0 30px rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
 }
 </style>
 
