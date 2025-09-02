@@ -12,13 +12,14 @@
             class="ai-cover-input" 
             v-model="prompt"
             placeholder="例如：一只可爱的猫，赛博朋克风格"
+            :disabled="isLoading"
           />
         </div>
 
         <div class="ai-cover-form-group-inline">
           <div class="ai-cover-form-group">
             <label for="ai-cover-model">选择模型</label>
-            <select id="ai-cover-model" class="ai-cover-select" v-model="model">
+            <select id="ai-cover-model" class="ai-cover-select" v-model="model" :disabled="isLoading">
               <option v-for="m in availableModels" :key="m.id" :value="m.id">
                 {{ m.name }}
               </option>
@@ -29,7 +30,7 @@
           </div>
           <div class="ai-cover-form-group">
             <label for="ai-cover-size">图片尺寸</label>
-            <select id="ai-cover-size" class="ai-cover-select" v-model="size">
+            <select id="ai-cover-size" class="ai-cover-select" v-model="size" :disabled="isLoading">
               <option value="1024*1024">1024*1024</option>
               <option value="720*1280">720*1280 (竖屏)</option>
               <option value="1280*720">1280*720 (横屏)</option>
@@ -38,7 +39,7 @@
         </div>
         
         <div class="ai-cover-form-group-checkbox">
-          <input type="checkbox" id="ai-cover-upload-alist" v-model="uploadToAlist">
+          <input type="checkbox" id="ai-cover-upload-alist" v-model="uploadToAlist" :disabled="isLoading">
           <label for="ai-cover-upload-alist">将图片上传到 Alist (需在插件设置中配置)</label>
         </div>
 
@@ -49,15 +50,21 @@
             @click="generateImage"
             :disabled="isLoading"
           >
-            {{ isLoading ? '生成中...' : '生成图片' }}
+            {{ isLoading ? '运行中...' : '生成图片' }}
           </button>
-          <button id="ai-cover-close-btn" class="ai-cover-button ai-cover-button-secondary" @click="closeModal">
+          <button id="ai-cover-close-btn" class="ai-cover-button ai-cover-button-secondary" @click="closeModal" :disabled="isLoading">
             关闭
           </button>
         </div>
         
-        <div v-if="isLoading" class="ai-cover-loading">
-          <p>图片正在生成，请稍候...</p>
+        <!-- --- 核心改造：实时进度显示区域 --- -->
+        <div v-if="isLoading" class="ai-cover-progress-container">
+          <ul class="ai-cover-progress-list">
+            <li v-for="(update, index) in progressUpdates" :key="index" :class="['progress-item', { 'is-error': update.isError }]">
+              <span class="progress-icon">{{ update.isError ? '❌' : '✅' }}</span>
+              <span class="progress-message">{{ update.message }}</span>
+            </li>
+          </ul>
         </div>
 
         <div v-if="previewUrl" id="ai-cover-preview-container" class="ai-cover-preview">
@@ -78,9 +85,6 @@
             </button>
           </div>
         </div>
-        <p v-if="error || warning" :class="error ? 'ai-cover-error-text' : 'ai-cover-warning-text'">
-            {{ error || warning }}
-        </p>
       </div>
     </div>
   </Transition>
@@ -95,56 +99,45 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 
-const props = defineProps<{
-  visible: boolean;
-}>();
+// 定义组件接收的属性 (props) 和发出的事件 (emits)
+const props = defineProps<{ visible: boolean }>();
 const emit = defineEmits(['close', 'use-image']);
 
+// 组件内部状态
 const prompt = ref('');
 const model = ref(''); 
 const size = ref('1024*1024');
 const isLoading = ref(false);
 const previewUrl = ref('');
-const error = ref('');
-const warning = ref('');
 const availableModels = ref<{name: string, id: string}[]>([]);
 const isImageZoomed = ref(false);
 const uploadToAlist = ref(true);
+const progressUpdates = ref<{ message: string, isError?: boolean }[]>([]); // 存储进度消息
 
-/**
- * --- 核心修正：将获取模型的逻辑封装成一个可重用函数 ---
- */
+// 获取模型列表的函数
 const fetchModels = async () => {
   try {
     const response = await fetch('/api/plugins/aicover/models');
     if (!response.ok) throw new Error('获取模型列表失败');
     const modelsData = await response.json();
     availableModels.value = modelsData;
-
-    // 如果列表不为空，且当前选中的模型不在新列表中，则自动选中第一个
-    const isCurrentModelValid = modelsData.some((m: {id: string}) => m.id === model.value);
-    if (modelsData.length > 0 && !isCurrentModelValid) {
+    if (modelsData.length > 0 && !model.value) {
       model.value = modelsData[0].id;
     }
   } catch (err: any) {
     console.error("加载 AI 模型列表失败:", err);
-    error.value = `加载模型列表失败: ${err.message}`;
+    progressUpdates.value.push({ message: `加载模型列表失败: ${err.message}`, isError: true });
     availableModels.value = [{ name: '默认模型 (加载失败)', id: 'wanx-v1' }];
     model.value = 'wanx-v1';
   }
 };
 
-/**
- * --- 核心修正：使用 watch 侦听器 ---
- * 侦听 visible 属性的变化。
- */
+// 侦听 visible 属性，当弹窗变为可见时，获取最新的模型列表
 watch(() => props.visible, (isVisible) => {
-  // 当弹窗从“不可见”变为“可见”时，重新获取模型列表
   if (isVisible) {
-    console.log("AI Cover Modal is now visible, fetching models...");
     fetchModels();
   }
-}, { immediate: true }); // immediate: true 确保组件首次加载时也会执行一次
+});
 
 const closeModal = () => {
   if (!isLoading.value) emit('close');
@@ -155,50 +148,54 @@ const useImage = () => {
   closeModal();
 };
 
-const generateImage = async () => {
+/**
+ * --- 核心改造：使用 EventSource 替代 fetch ---
+ */
+const generateImage = () => {
   if (!prompt.value) {
     alert("请输入提示词！");
     return;
   }
+
   isLoading.value = true;
   previewUrl.value = '';
-  error.value = '';
-  warning.value = '';
+  progressUpdates.value = []; // 清空旧的进度
 
-  try {
-    const response = await fetch("/api/plugins/aicover/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        prompt: prompt.value, 
-        model: model.value, 
-        size: size.value,
-        uploadToAlist: uploadToAlist.value
-      }),
-    });
-    
-    const result = await response.json();
+  const params = new URLSearchParams({
+    prompt: prompt.value,
+    model: model.value,
+    size: size.value,
+    uploadToAlist: String(uploadToAlist.value)
+  });
 
-    if (!response.ok) {
-      throw new Error(result.message || `HTTP 错误! 状态码: ${response.status}`);
+  const eventSource = new EventSource(`/api/plugins/aicover/generate?${params.toString()}`);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      progressUpdates.value.push({
+        message: data.message,
+        isError: data.isError
+      });
+
+      // 如果收到了最终的图片 URL，则任务完成
+      if (data.finalImageUrl) {
+        previewUrl.value = data.finalImageUrl;
+        isLoading.value = false;
+        eventSource.close();
+      }
+    } catch (e) {
+      console.error("解析 SSE 数据失败:", e);
+      progressUpdates.value.push({ message: "收到无法解析的数据", isError: true });
     }
-    
-    if (result.imageUrl) {
-      previewUrl.value = result.imageUrl;
-    } else {
-      throw new Error("API 响应中缺少图片 URL。");
-    }
+  };
 
-    if (result.warning) {
-      warning.value = result.warning;
-    }
-
-  } catch (e: any) {
-    console.error("AI Cover: 图片生成失败", e);
-    error.value = `操作失败: ${e.message}`;
-  } finally {
+  eventSource.onerror = (error) => {
+    console.error("EventSource 发生错误:", error);
+    progressUpdates.value.push({ message: "与服务器的连接中断，请检查网络或后台日志。", isError: true });
     isLoading.value = false;
-  }
+    eventSource.close();
+  };
 };
 </script>
 
@@ -367,5 +364,33 @@ const generateImage = async () => {
   object-fit: contain;
   box-shadow: 0 0 30px rgba(255, 255, 255, 0.2);
   border-radius: 4px;
+}
+.ai-cover-progress-container {
+  margin-top: 16px;
+  background-color: #f7f7f7;
+  border-radius: 8px;
+  padding: 8px 12px;
+  max-height: 150px;
+  overflow-y: auto;
+  border: 1px solid #eee;
+}
+.ai-cover-progress-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.progress-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 0;
+  font-size: 0.9rem;
+  color: #333;
+}
+.progress-item.is-error {
+  color: #d9534f;
+}
+.progress-icon {
+  margin-right: 8px;
+  flex-shrink: 0;
 }
 </style>

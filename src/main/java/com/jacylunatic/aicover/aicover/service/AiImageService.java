@@ -4,12 +4,13 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jacylunatic.aicover.aicover.model.AiCoverSetting;
-import com.jacylunatic.aicover.aicover.model.GenerateImageResponse;
+import com.jacylunatic.aicover.aicover.model.ProgressUpdate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 import run.halo.app.plugin.ReactiveSettingFetcher;
@@ -27,51 +28,78 @@ public class AiImageService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final AlistService alistService;
 
-    /**
-     * 调用 AI 服务生成图片，并根据选项决定是否上传到 Alist。
-     * @param uploadToAlist 是否上传到 Alist
-     * @return 包含最终图片 URL 和潜在警告信息的响应对象
-     */
-    public Mono<GenerateImageResponse> generateImage(String prompt, String model, String size, boolean uploadToAlist) {
-        return getTempImageUrl(prompt, model, size)
-            .flatMap(tempImageUrl -> {
-                if (uploadToAlist) {
-                    log.info("检测到上传 Alist 选项，正在调用 AlistService...");
-                    return alistService.uploadImageFromUrl(tempImageUrl)
-                        .map(GenerateImageResponse::new)
-                        // --- 核心修正：添加 onErrorResume 回退逻辑 ---
-                        .onErrorResume(error -> {
-                            log.warn("Alist 上传失败，将返回原始临时链接。错误详情: {}", error.getMessage());
-                            String warningMessage = "图片已生成，但上传到 Alist 失败: " + error.getMessage();
-                            // 返回一个包含原始 URL 和警告信息的响应
-                            return Mono.just(new GenerateImageResponse(tempImageUrl, warningMessage));
-                        });
-                } else {
-                    log.info("未选择上传 Alist，直接返回临时 URL。");
-                    return Mono.just(new GenerateImageResponse(tempImageUrl));
+    private static class PollAgainException extends RuntimeException {}
+
+    public Flux<ProgressUpdate> generateImage(String prompt, String model, String size, boolean uploadToAlist) {
+        // 阶段1：生成AI图片，并实时推送进度。 .share() 允许多个下游订阅者共享同一个上游流，防止重复执行。
+        Flux<ProgressUpdate> aiGenerationStream = getTempImageUrlWithProgress(prompt, model, size).share();
+
+        // 如果不需要上传到 Alist，则直接返回 AI 生成流
+        if (!uploadToAlist) {
+            return aiGenerationStream;
+        }
+
+        // --- 核心修正：正确的响应式流编排 ---
+        // 阶段2：当阶段1完成后，根据最后一个进度更新中的URL，开始 Alist 上传流程。
+        Flux<ProgressUpdate> alistUploadStream = aiGenerationStream
+            .last() // 等待AI生成流完成，并获取最后一个元素（即成功或失败的那个ProgressUpdate）
+            .flatMapMany(lastUpdate -> {
+                log.info("[Debug AiImageService] AI Generation stream completed. Last update: {}", lastUpdate);
+                String tempUrl = lastUpdate.getFinalImageUrl();
+
+                if (tempUrl == null) {
+                    // 如果AI生成失败，lastUpdate里就没有URL，直接返回错误信息
+                    return Flux.just(ProgressUpdate.error("AI绘图失败，无法继续上传到Alist。"));
                 }
+                log.info("[Debug AiImageService] Preparing to call AlistService with URL: {}", tempUrl);
+                return alistService.uploadImageFromUrl(tempUrl);
+            })
+            // Alist上传阶段的专属错误处理
+            .onErrorResume(error -> {
+                log.warn("Alist upload failed, will attempt to fall back.", error);
+                // 再次从阶段1的流中获取URL用于回退
+                return aiGenerationStream.last().flatMapMany(lastUpdate -> {
+                    String fallbackUrl = lastUpdate.getFinalImageUrl() != null ? lastUpdate.getFinalImageUrl() : "链接获取失败";
+                    String warningMessage = "图片已生成，但上传到 Alist 失败: " + error.getMessage();
+                    return Flux.just(
+                        ProgressUpdate.error(warningMessage),
+                        ProgressUpdate.success(fallbackUrl, "已回退并使用原始链接。")
+                    );
+                });
             });
+
+        // 将AI生成流（不包含最后一条成功消息）和Alist上传流拼接在一起
+        return Flux.concat(
+            aiGenerationStream.filter(update -> update.getFinalImageUrl() == null),
+            alistUploadStream
+        );
     }
-    
-    private Mono<String> getTempImageUrl(String prompt, String model, String size) {
-        return settingFetcher.fetch(AiCoverSetting.GROUP, AiCoverSetting.class)
+
+    private Flux<ProgressUpdate> getTempImageUrlWithProgress(String prompt, String model, String size) {
+        Mono<String> apiKeyMono = settingFetcher.fetch(AiCoverSetting.GROUP, AiCoverSetting.class)
             .switchIfEmpty(Mono.just(new AiCoverSetting()))
             .flatMap(setting -> {
                 String apiKey = setting.getApiKey();
                 if (apiKey == null || apiKey.isBlank()) {
                     return Mono.error(new IllegalStateException("未在插件设置中找到有效的 API-KEY"));
                 }
-                return submitGenerationTask(prompt, model, size, apiKey);
-            })
-            .flatMap(this::pollTaskResult);
+                return Mono.just(apiKey);
+            });
+
+        return apiKeyMono.flux().concatMap(apiKey ->
+            Flux.concat(
+                Mono.just(new ProgressUpdate("正在提交 AI 绘图任务...")),
+                submitGenerationTask(prompt, model, size, apiKey)
+                    .flux()
+                    .concatMap(taskId -> pollTaskResultWithProgress(taskId, apiKey))
+            )
+        );
     }
     
     private Mono<String> submitGenerationTask(String prompt, String model, String size, String apiKey) {
         String url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
         Map<String, Object> requestBody = Map.of(
-            "model", model,
-            "input", Map.of("prompt", prompt),
-            "parameters", Map.of("size", size, "n", 1)
+            "model", model, "input", Map.of("prompt", prompt), "parameters", Map.of("size", size, "n", 1)
         );
         return webClient.post()
             .uri(url)
@@ -86,47 +114,46 @@ public class AiImageService {
             .flatMap(this::parseTaskIdFromResponse);
     }
     
-    private Mono<String> pollTaskResult(String taskId) {
-        return settingFetcher.fetch(AiCoverSetting.GROUP, AiCoverSetting.class)
-            .switchIfEmpty(Mono.just(new AiCoverSetting()))
-            .flatMap(setting -> {
-                String apiKey = setting.getApiKey();
-                if (apiKey == null || apiKey.isBlank()) {
-                    return Mono.error(new IllegalStateException("API-KEY 在轮询时丢失"));
-                }
-                String url = "https://dashscope.aliyuncs.com/api/v1/tasks/" + taskId;
-                return webClient.get()
-                    .uri(url)
-                    .header("Authorization", "Bearer " + apiKey)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .flatMap(this::checkTaskStatusAndGetUrl);
-            })
-            .retryWhen(Retry.fixedDelay(60, Duration.ofSeconds(2))
-                .filter(error -> error instanceof TaskNotFinishedException)
+    private Flux<ProgressUpdate> pollTaskResultWithProgress(String taskId, String apiKey) {
+        String url = "https://dashscope.aliyuncs.com/api/v1/tasks/" + taskId;
+
+        return webClient.get()
+            .uri(url)
+            .header("Authorization", "Bearer " + apiKey)
+            .retrieve()
+            .bodyToMono(String.class)
+            .flatMap(this::checkTaskStatusAndDecideNextAction)
+            .retryWhen(Retry.fixedDelay(15, Duration.ofSeconds(2))
+                .filter(error -> error instanceof PollAgainException)
                 .onRetryExhaustedThrow((retryBackoffSpec, retrySignal) ->
-                    new RuntimeException("图片生成超时，请稍后再试。")));
+                    new RuntimeException("图片生成超时，请稍后再试。")))
+            .flux();
     }
 
-    private Mono<String> checkTaskStatusAndGetUrl(String jsonResponse) {
+    private Mono<ProgressUpdate> checkTaskStatusAndDecideNextAction(String jsonResponse) {
         try {
             JsonNode root = objectMapper.readTree(jsonResponse);
             String taskStatus = root.at("/output/task_status").asText();
-            if ("SUCCEEDED".equals(taskStatus)) {
-                JsonNode urlNode = root.at("/output/results/0/url");
-                if (urlNode.isMissingNode() || !urlNode.isTextual()) {
-                    return Mono.error(new RuntimeException("任务成功，但未在响应中找到图片 URL。"));
-                }
-                return Mono.just(urlNode.asText());
-            } else if ("FAILED".equals(taskStatus)) {
-                return Mono.error(new RuntimeException(root.at("/output/message").asText("任务执行失败")));
-            } else if ("PENDING".equals(taskStatus) || "RUNNING".equals(taskStatus)) {
-                return Mono.error(new TaskNotFinishedException());
-            } else {
-                return Mono.error(new RuntimeException("未知的任务状态: " + taskStatus));
+            log.info("查询到任务状态: {}", taskStatus);
+
+            switch (taskStatus) {
+                case "SUCCEEDED":
+                    JsonNode urlNode = root.at("/output/results/0/url");
+                    if (urlNode.isMissingNode() || !urlNode.isTextual()) {
+                        return Mono.just(ProgressUpdate.error("任务成功，但未在响应中找到图片 URL。"));
+                    }
+                    return Mono.just(ProgressUpdate.success(urlNode.asText(), "AI 绘图成功！"));
+                case "FAILED":
+                    String errorMessage = root.at("/output/message").asText("任务执行失败");
+                    return Mono.just(ProgressUpdate.error(errorMessage));
+                case "PENDING":
+                case "RUNNING":
+                    return Mono.error(new PollAgainException());
+                default:
+                    return Mono.just(ProgressUpdate.error("未知的任务状态: " + taskStatus));
             }
         } catch (JsonProcessingException e) {
-            return Mono.error(new RuntimeException("解析任务状态响应失败", e));
+            return Mono.just(ProgressUpdate.error("解析任务状态响应失败: " + e.getMessage()));
         }
     }
 
@@ -151,7 +178,5 @@ public class AiImageService {
             return errorBody;
         }
     }
-
-    private static class TaskNotFinishedException extends RuntimeException {}
 }
 

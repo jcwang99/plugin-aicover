@@ -1,13 +1,14 @@
 package com.jacylunatic.aicover.aicover.controller;
 
 import com.jacylunatic.aicover.aicover.model.AiCoverSetting;
-import com.jacylunatic.aicover.aicover.model.GenerateImageRequest;
-import com.jacylunatic.aicover.aicover.model.GenerateImageResponse;
 import com.jacylunatic.aicover.aicover.model.ModelInfo;
+import com.jacylunatic.aicover.aicover.model.ProgressUpdate;
 import com.jacylunatic.aicover.aicover.service.AiImageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import run.halo.app.plugin.ReactiveSettingFetcher;
 
@@ -25,17 +26,25 @@ public class AiImageController {
     private final AiImageService aiImageService;
     private final ReactiveSettingFetcher settingFetcher;
 
-    @PostMapping("generate")
-    public Mono<GenerateImageResponse> generateImage(@RequestBody GenerateImageRequest request) {
-        log.info("[Debug AiImageController] Received generate image request: {}", request);
-        
-        // 直接返回 Service 提供的响应对象
-        return aiImageService.generateImage(
-            request.getPrompt(),
-            request.getModel(),
-            request.getSize(),
-            request.isUploadToAlist()
-        );
+    @GetMapping(value = "generate", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<ProgressUpdate> generateImage(
+        @RequestParam("prompt") String prompt,
+        @RequestParam("model") String model,
+        @RequestParam("size") String size,
+        // --- Debug Step 1: 接收参数为 String 类型以查看原始值 ---
+        @RequestParam(name = "uploadToAlist", defaultValue = "false") String uploadToAlistRaw
+    ) {
+        // --- Debug Step 2: 手动解析并添加详细日志 ---
+        boolean uploadToAlist = Boolean.parseBoolean(uploadToAlistRaw);
+
+        log.info("[Controller Debug] Received raw 'uploadToAlist' parameter as String: '{}'", uploadToAlistRaw);
+        log.info("[Controller Debug] Parsed 'uploadToAlist' to boolean: {}", uploadToAlist);
+
+        log.info("[Controller] Forwarding generate image stream request: prompt='{}', model='{}', size='{}', uploadToAlist={}",
+            prompt, model, size, uploadToAlist);
+
+        // 将解析后的布尔值传递给服务
+        return aiImageService.generateImage(prompt, model, size, uploadToAlist);
     }
 
     @GetMapping("models")
