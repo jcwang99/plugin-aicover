@@ -7,7 +7,6 @@ import com.jacylunatic.aicover.aicover.model.AlistSetting;
 import io.netty.channel.ChannelOption;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
@@ -23,8 +22,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
@@ -134,9 +131,6 @@ public class AlistService {
             .thenReturn(uploadPath);
     }
 
-    /**
-     * --- 核心修正：使用官方 /api/fs/list 接口刷新缓存 ---
-     */
     private Mono<Void> refreshAlistStorage(String uploadPath, String token, AlistSetting setting) {
         String parentPath = uploadPath.substring(0, uploadPath.lastIndexOf('/'));
         if (parentPath.isEmpty()) {
@@ -148,7 +142,7 @@ public class AlistService {
             .uri(setting.getAlistUrl() + "/api/fs/list")
             .header("Authorization", token)
             .header("Content-Type", "application/json")
-            .bodyValue(Map.of("path", parentPath, "refresh", true)) // 设置 refresh: true
+            .bodyValue(Map.of("path", parentPath, "refresh", true))
             .retrieve()
             .onStatus(HttpStatusCode::isError, response -> response.bodyToMono(String.class)
                 .flatMap(errorBody -> Mono.error(new RuntimeException("Alist 缓存刷新失败: " + parseAlistErrorMessage(errorBody)))))
@@ -171,7 +165,6 @@ public class AlistService {
     }
 
     private Mono<String> checkAlistUploadResponse(String jsonResponse) {
-        log.info("[AlistService] Alist 上传成功，正在检查响应内容: {}", jsonResponse);
         try {
             JsonNode root = objectMapper.readTree(jsonResponse);
             if (root.at("/code").asInt(-1) == 200) {
@@ -206,10 +199,10 @@ public class AlistService {
             .onStatus(HttpStatusCode::isError, response -> response.bodyToMono(String.class)
                 .flatMap(errorBody -> Mono.error(new RuntimeException("获取 Alist 签名链接失败: " + parseAlistErrorMessage(errorBody)))))
             .bodyToMono(String.class)
-            .flatMap(this::parseSignedUrlFromResponse);
+            .flatMap(jsonResponse -> parseSignedUrlFromResponse(jsonResponse, setting)); // 传递 setting
     }
 
-    private Mono<String> parseSignedUrlFromResponse(String jsonResponse) {
+    private Mono<String> parseSignedUrlFromResponse(String jsonResponse, AlistSetting setting) {
         log.info("[Debug AlistService] 准备解析签名链接响应: {}", jsonResponse);
         try {
             JsonNode root = objectMapper.readTree(jsonResponse);
@@ -225,10 +218,35 @@ public class AlistService {
             if (!StringUtils.hasText(rawUrl)) {
                 return Mono.error(new RuntimeException("获取签名失败，响应中缺少 'raw_url' 字段。"));
             }
-            log.info("[AlistService] 成功获取带签名的 Alist URL: {}", rawUrl);
-            return Mono.just(rawUrl);
+
+            // --- 核心修正：修正 URL 协议 ---
+            String finalUrl = fixUrlProtocol(rawUrl, setting.getAlistUrl());
+            log.info("[AlistService] 成功构造带签名的 Alist URL (协议已修正): {}", finalUrl);
+            return Mono.just(finalUrl);
+
         } catch (JsonProcessingException e) {
             return Mono.error(new RuntimeException("解析 Alist 签名响应失败", e));
+        }
+    }
+
+    /**
+     * --- 新增方法：修正 URL 协议 ---
+     * 确保返回的 URL 协议与用户在设置中配置的 Alist URL 协议一致。
+     */
+    private String fixUrlProtocol(String originalUrl, String configUrl) {
+        try {
+            URL original = new URL(originalUrl);
+            URL config = new URL(configUrl);
+
+            if (original.getProtocol().equalsIgnoreCase(config.getProtocol())) {
+                return originalUrl;
+            }
+
+            log.info("修正 URL 协议：从 {} -> {}", original.getProtocol(), config.getProtocol());
+            return new URL(config.getProtocol(), original.getHost(), original.getPort(), original.getFile()).toString();
+        } catch (Exception e) {
+            log.warn("URL 协议修正失败，将返回原始 URL。错误: {}", e.getMessage());
+            return originalUrl;
         }
     }
 
@@ -267,4 +285,3 @@ public class AlistService {
 
     private static class AlistObjectNotFoundException extends RuntimeException {}
 }
-
