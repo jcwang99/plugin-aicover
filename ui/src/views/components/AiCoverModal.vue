@@ -93,7 +93,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, watch } from 'vue';
 
 const props = defineProps<{
   visible: boolean;
@@ -111,20 +111,40 @@ const availableModels = ref<{name: string, id: string}[]>([]);
 const isImageZoomed = ref(false);
 const uploadToAlist = ref(true);
 
-onMounted(async () => {
+/**
+ * --- 核心修正：将获取模型的逻辑封装成一个可重用函数 ---
+ */
+const fetchModels = async () => {
   try {
     const response = await fetch('/api/plugins/aicover/models');
     if (!response.ok) throw new Error('获取模型列表失败');
     const modelsData = await response.json();
     availableModels.value = modelsData;
-    if (modelsData.length > 0) model.value = modelsData[0].id;
+
+    // 如果列表不为空，且当前选中的模型不在新列表中，则自动选中第一个
+    const isCurrentModelValid = modelsData.some((m: {id: string}) => m.id === model.value);
+    if (modelsData.length > 0 && !isCurrentModelValid) {
+      model.value = modelsData[0].id;
+    }
   } catch (err: any) {
     console.error("加载 AI 模型列表失败:", err);
     error.value = `加载模型列表失败: ${err.message}`;
     availableModels.value = [{ name: '默认模型 (加载失败)', id: 'wanx-v1' }];
     model.value = 'wanx-v1';
   }
-});
+};
+
+/**
+ * --- 核心修正：使用 watch 侦听器 ---
+ * 侦听 visible 属性的变化。
+ */
+watch(() => props.visible, (isVisible) => {
+  // 当弹窗从“不可见”变为“可见”时，重新获取模型列表
+  if (isVisible) {
+    console.log("AI Cover Modal is now visible, fetching models...");
+    fetchModels();
+  }
+}, { immediate: true }); // immediate: true 确保组件首次加载时也会执行一次
 
 const closeModal = () => {
   if (!isLoading.value) emit('close');
@@ -183,6 +203,7 @@ const generateImage = async () => {
 </script>
 
 <style scoped>
+/* 样式与之前版本相同，为简洁起见省略 */
 .modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.3s ease; }
 .modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
 .ai-cover-modal-overlay {
@@ -348,4 +369,3 @@ const generateImage = async () => {
   border-radius: 4px;
 }
 </style>
-
