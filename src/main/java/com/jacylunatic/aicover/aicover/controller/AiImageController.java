@@ -27,16 +27,15 @@ public class AiImageController {
 
     @PostMapping("generate")
     public Mono<GenerateImageResponse> generateImage(@RequestBody GenerateImageRequest request) {
-        // Debug Log
         log.info("[Debug AiImageController] Received generate image request: {}", request);
         
+        // 直接返回 Service 提供的响应对象
         return aiImageService.generateImage(
-                request.getPrompt(),
-                request.getModel(),
-                request.getSize(),
-                request.isUploadToAlist()
-            )
-            .map(GenerateImageResponse::new);
+            request.getPrompt(),
+            request.getModel(),
+            request.getSize(),
+            request.isUploadToAlist()
+        );
     }
 
     @GetMapping("models")

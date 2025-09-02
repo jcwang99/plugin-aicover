@@ -1,15 +1,23 @@
 package com.jacylunatic.aicover.aicover.model;
 
-import lombok.AllArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * 用于封装发送给前端的、包含图片 URL 的响应数据。
- */
 @Data
-@AllArgsConstructor
 @NoArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL) // 仅在字段不为 null 时序列化
 public class GenerateImageResponse {
+
     private String imageUrl;
+    private String warning;
+
+    public GenerateImageResponse(String imageUrl) {
+        this.imageUrl = imageUrl;
+    }
+
+    public GenerateImageResponse(String imageUrl, String warning) {
+        this.imageUrl = imageUrl;
+        this.warning = warning;
+    }
 }

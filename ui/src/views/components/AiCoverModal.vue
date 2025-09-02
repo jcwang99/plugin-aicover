@@ -36,8 +36,7 @@
             </select>
           </div>
         </div>
-
-        <!-- --- 新增 Alist 上传选项 --- -->
+        
         <div class="ai-cover-form-group-checkbox">
           <input type="checkbox" id="ai-cover-upload-alist" v-model="uploadToAlist">
           <label for="ai-cover-upload-alist">将图片上传到 Alist (需在插件设置中配置)</label>
@@ -79,7 +78,9 @@
             </button>
           </div>
         </div>
-         <p v-if="error" class="ai-cover-error-text">{{ error }}</p>
+        <p v-if="error || warning" :class="error ? 'ai-cover-error-text' : 'ai-cover-warning-text'">
+            {{ error || warning }}
+        </p>
       </div>
     </div>
   </Transition>
@@ -97,7 +98,6 @@ import { ref, onMounted } from 'vue';
 const props = defineProps<{
   visible: boolean;
 }>();
-
 const emit = defineEmits(['close', 'use-image']);
 
 const prompt = ref('');
@@ -106,33 +106,28 @@ const size = ref('1024*1024');
 const isLoading = ref(false);
 const previewUrl = ref('');
 const error = ref('');
+const warning = ref('');
 const availableModels = ref<{name: string, id: string}[]>([]);
 const isImageZoomed = ref(false);
-const uploadToAlist = ref(true); // 新增状态，控制是否上传到 Alist
+const uploadToAlist = ref(true);
 
 onMounted(async () => {
   try {
     const response = await fetch('/api/plugins/aicover/models');
-    if (!response.ok) {
-      throw new Error('获取模型列表失败');
-    }
+    if (!response.ok) throw new Error('获取模型列表失败');
     const modelsData = await response.json();
     availableModels.value = modelsData;
-    if (modelsData.length > 0) {
-      model.value = modelsData[0].id;
-    }
-  } catch (err) {
+    if (modelsData.length > 0) model.value = modelsData[0].id;
+  } catch (err: any) {
     console.error("加载 AI 模型列表失败:", err);
-    error.value = "加载模型列表失败，请检查插件设置。";
+    error.value = `加载模型列表失败: ${err.message}`;
     availableModels.value = [{ name: '默认模型 (加载失败)', id: 'wanx-v1' }];
     model.value = 'wanx-v1';
   }
 });
 
 const closeModal = () => {
-  if (!isLoading.value) {
-    emit('close');
-  }
+  if (!isLoading.value) emit('close');
 };
 
 const useImage = () => {
@@ -145,10 +140,10 @@ const generateImage = async () => {
     alert("请输入提示词！");
     return;
   }
-
   isLoading.value = true;
   previewUrl.value = '';
   error.value = '';
+  warning.value = '';
 
   try {
     const response = await fetch("/api/plugins/aicover/generate", {
@@ -158,27 +153,29 @@ const generateImage = async () => {
         prompt: prompt.value, 
         model: model.value, 
         size: size.value,
-        uploadToAlist: uploadToAlist.value // 将 Alist 上传选项发送给后端
+        uploadToAlist: uploadToAlist.value
       }),
     });
     
+    const result = await response.json();
+
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ message: `HTTP 错误! 状态码: ${response.status}` }));
-      throw new Error(errorData.message || `HTTP 错误! 状态码: ${response.status}`);
+      throw new Error(result.message || `HTTP 错误! 状态码: ${response.status}`);
     }
     
-    const result = await response.json();
-    const imageUrl = result.imageUrl;
-
-    if (!imageUrl) {
-        throw new Error("未能从 API 响应中获取图片 URL。响应内容: " + JSON.stringify(result));
+    if (result.imageUrl) {
+      previewUrl.value = result.imageUrl;
+    } else {
+      throw new Error("API 响应中缺少图片 URL。");
     }
 
-    previewUrl.value = imageUrl;
+    if (result.warning) {
+      warning.value = result.warning;
+    }
 
   } catch (e: any) {
     console.error("AI Cover: 图片生成失败", e);
-    error.value = `图片生成失败: ${e.message}`;
+    error.value = `操作失败: ${e.message}`;
   } finally {
     isLoading.value = false;
   }
@@ -186,23 +183,8 @@ const generateImage = async () => {
 </script>
 
 <style scoped>
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
-}
-.modal-fade-enter-active .ai-cover-modal-content,
-.modal-fade-leave-active .ai-cover-modal-content {
-  transition: transform 0.3s ease;
-}
-.modal-fade-enter-from .ai-cover-modal-content,
-.modal-fade-leave-to .ai-cover-modal-content {
-  transform: scale(0.95);
-}
-
+.modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.3s ease; }
+.modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
 .ai-cover-modal-overlay {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
@@ -239,7 +221,6 @@ const generateImage = async () => {
   flex: 1;
   flex-shrink: 0;
 }
-/* --- 新增复选框样式 --- */
 .ai-cover-form-group-checkbox {
   display: flex;
   align-items: center;
@@ -254,7 +235,6 @@ const generateImage = async () => {
   font-size: 0.9rem;
   color: #555;
 }
-
 .ai-cover-form-group-inline {
   display: flex;
   gap: 16px;
@@ -332,17 +312,21 @@ const generateImage = async () => {
   display: inline-block;
   cursor: zoom-in;
 }
-.ai-cover-loading, .ai-cover-error-text {
+.ai-cover-loading, .ai-cover-error-text, .ai-cover-warning-text {
   margin-top: 24px;
   text-align: center;
-  color: #555;
-  flex-shrink: 0;
+  font-weight: 500;
+  padding: 8px;
+  border-radius: 4px;
 }
 .ai-cover-error-text {
   color: #d9534f;
-  font-weight: 500;
+  background-color: #f2dede;
 }
-
+.ai-cover-warning-text {
+  color: #8a6d3b;
+  background-color: #fcf8e3;
+}
 .image-zoom-overlay {
   position: fixed;
   top: 0;
