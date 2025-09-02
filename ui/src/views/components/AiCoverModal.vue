@@ -37,6 +37,12 @@
           </div>
         </div>
 
+        <!-- --- 新增 Alist 上传选项 --- -->
+        <div class="ai-cover-form-group-checkbox">
+          <input type="checkbox" id="ai-cover-upload-alist" v-model="uploadToAlist">
+          <label for="ai-cover-upload-alist">将图片上传到 Alist (需在插件设置中配置)</label>
+        </div>
+
         <div class="ai-cover-actions">
           <button 
             id="ai-cover-generate-btn" 
@@ -78,7 +84,6 @@
     </div>
   </Transition>
 
-  <!-- --- 新增功能：图片放大预览 --- -->
   <Transition name="modal-fade">
     <div v-if="isImageZoomed" class="image-zoom-overlay" @click="isImageZoomed = false">
       <img :src="previewUrl" class="zoomed-image" alt="放大的 AI 图片">
@@ -89,14 +94,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 
-// 定义组件接收的属性 (props) 和发出的事件 (emits)
 const props = defineProps<{
   visible: boolean;
 }>();
 
 const emit = defineEmits(['close', 'use-image']);
 
-// 组件内部状态
 const prompt = ref('');
 const model = ref(''); 
 const size = ref('1024*1024');
@@ -104,9 +107,9 @@ const isLoading = ref(false);
 const previewUrl = ref('');
 const error = ref('');
 const availableModels = ref<{name: string, id: string}[]>([]);
-const isImageZoomed = ref(false); // 新增状态，用于控制图片放大显示
+const isImageZoomed = ref(false);
+const uploadToAlist = ref(true); // 新增状态，控制是否上传到 Alist
 
-// 在组件挂载时，从后端获取模型列表
 onMounted(async () => {
   try {
     const response = await fetch('/api/plugins/aicover/models');
@@ -126,21 +129,17 @@ onMounted(async () => {
   }
 });
 
-
-// 关闭弹窗
 const closeModal = () => {
   if (!isLoading.value) {
     emit('close');
   }
 };
 
-// 使用图片
 const useImage = () => {
   emit('use-image', previewUrl.value);
   closeModal();
 };
 
-// 调用后端 API 生成图片
 const generateImage = async () => {
   if (!prompt.value) {
     alert("请输入提示词！");
@@ -158,7 +157,8 @@ const generateImage = async () => {
       body: JSON.stringify({ 
         prompt: prompt.value, 
         model: model.value, 
-        size: size.value 
+        size: size.value,
+        uploadToAlist: uploadToAlist.value // 将 Alist 上传选项发送给后端
       }),
     });
     
@@ -239,6 +239,22 @@ const generateImage = async () => {
   flex: 1;
   flex-shrink: 0;
 }
+/* --- 新增复选框样式 --- */
+.ai-cover-form-group-checkbox {
+  display: flex;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.ai-cover-form-group-checkbox input {
+  margin-right: 8px;
+  width: 16px;
+  height: 16px;
+}
+.ai-cover-form-group-checkbox label {
+  font-size: 0.9rem;
+  color: #555;
+}
+
 .ai-cover-form-group-inline {
   display: flex;
   gap: 16px;
@@ -313,8 +329,8 @@ const generateImage = async () => {
   border-radius: 8px;
   border: 1px solid #ddd;
   margin-top: 8px;
-  display: inline-block; /* 确保图片居中 */
-  cursor: zoom-in; /* 提示用户图片可点击放大 */
+  display: inline-block;
+  cursor: zoom-in;
 }
 .ai-cover-loading, .ai-cover-error-text {
   margin-top: 24px;
@@ -327,7 +343,6 @@ const generateImage = async () => {
   font-weight: 500;
 }
 
-/* --- 新增样式：图片放大预览 --- */
 .image-zoom-overlay {
   position: fixed;
   top: 0;
@@ -338,7 +353,7 @@ const generateImage = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10000; /* 确保在最顶层 */
+  z-index: 10000;
   cursor: zoom-out;
 }
 .zoomed-image {

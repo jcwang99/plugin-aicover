@@ -26,3 +26,32 @@ spec:
           help: "例如：通义万相 V1,wanx-v1"
           # 提供一个默认值
           value: "通义万相 V1,wanx-v1"          
+    - group: alist-settings
+      label: Alist 设置
+      formSchema:
+        - $formkit: text
+          name: alistUrl
+          key: alistUrl
+          id: alistUrl
+          label: Alist 服务器地址
+          placeholder: "例如: http://192.168.1.10:5244"
+          help: "您的 Alist 实例的完整 URL。"
+        - $formkit: text
+          name: alistUsername
+          key: alistUsername
+          id: alistUsername
+          label: Alist 用户名
+          placeholder: "请输入 Alist 登录用户名"
+        - $formkit: password
+          name: alistPassword
+          key: alistPassword
+          id: alistPassword
+          label: Alist 密码
+          placeholder: "请输入 Alist 登录密码"
+        - $formkit: text
+          name: alistUploadPath
+          key: alistUploadPath
+          id: alistUploadPath
+          label: 图片上传路径
+          placeholder: "例如: /uploads/covers"
+          help: "图片在 Alist 中存储的绝对路径，以 / 开头。"

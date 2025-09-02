@@ -10,4 +10,5 @@ public class GenerateImageRequest {
     private String prompt;
     private String model;
     private String size;
+    private boolean uploadToAlist;
 }

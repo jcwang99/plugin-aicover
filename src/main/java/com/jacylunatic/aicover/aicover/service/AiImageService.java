@@ -25,8 +25,33 @@ public class AiImageService {
     private final WebClient webClient = WebClient.builder().build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public Mono<String> generateImage(String prompt, String model, String size) {
-        // 步骤 1: 获取 API-KEY 并提交任务
+    private final AlistService alistService;
+
+    /**
+     * 调用 AI 服务生成图片，并根据选项决定是否上传到 Alist。
+     * @param uploadToAlist 是否上传到 Alist
+     * @return 包含最终图片 URL 的 Mono<String>
+     */
+    public Mono<String> generateImage(String prompt, String model, String size, boolean uploadToAlist) {
+        // 步骤 1: 获取临时 URL
+        return getTempImageUrl(prompt, model, size)
+            .flatMap(tempImageUrl -> {
+                if (uploadToAlist) {
+                    log.info("检测到上传 Alist 选项，正在调用 AlistService...");
+                    // 如果需要上传，则调用 AlistService
+                    return alistService.uploadImageFromUrl(tempImageUrl);
+                } else {
+                    log.info("未选择上传 Alist，直接返回临时 URL。");
+                    // 否则，直接返回临时 URL
+                    return Mono.just(tempImageUrl);
+                }
+            });
+    }
+
+    /**
+     * 从阿里云百炼获取临时的图片 URL。
+     */
+    private Mono<String> getTempImageUrl(String prompt, String model, String size) {
         return settingFetcher.fetch(AiCoverSetting.GROUP, AiCoverSetting.class)
             .switchIfEmpty(Mono.just(new AiCoverSetting()))
             .flatMap(setting -> {
@@ -36,18 +61,12 @@ public class AiImageService {
                 }
                 return submitGenerationTask(prompt, model, size, apiKey);
             })
-            // 步骤 2: 轮询任务结果
-            .flatMap(taskId -> pollTaskResult(taskId, settingFetcher));
+            .flatMap(this::pollTaskResult);
     }
-
-    /**
-     * 步骤 1: 提交图片生成任务，获取 Task ID。
-     */
+    
     private Mono<String> submitGenerationTask(String prompt, String model, String size, String apiKey) {
-        // 使用官方文档提供的正确 URL
         String url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
 
-        // 构建符合官方文档规范的请求体
         Map<String, Object> requestBody = Map.of(
             "model", model,
             "input", Map.of("prompt", prompt),
@@ -59,7 +78,7 @@ public class AiImageService {
         return webClient.post()
             .uri(url)
             .header("Authorization", "Bearer " + apiKey)
-            .header("X-DashScope-Async", "enable") // 添加必需的异步头
+            .header("X-DashScope-Async", "enable")
             .header("Content-Type", "application/json")
             .bodyValue(requestBody)
             .retrieve()
@@ -71,11 +90,8 @@ public class AiImageService {
             .bodyToMono(String.class)
             .flatMap(this::parseTaskIdFromResponse);
     }
-
-    /**
-     * 步骤 2: 轮询任务结果，直到成功或超时。
-     */
-    private Mono<String> pollTaskResult(String taskId, ReactiveSettingFetcher settingFetcher) {
+    
+    private Mono<String> pollTaskResult(String taskId) {
         return settingFetcher.fetch(AiCoverSetting.GROUP, AiCoverSetting.class)
             .switchIfEmpty(Mono.just(new AiCoverSetting()))
             .flatMap(setting -> {
@@ -92,16 +108,12 @@ public class AiImageService {
                     .bodyToMono(String.class)
                     .flatMap(this::checkTaskStatusAndGetUrl);
             })
-            // 轮询逻辑：如果任务未完成，则等待2秒后重试，最多重试15次（总计约30秒）
             .retryWhen(Retry.fixedDelay(15, Duration.ofSeconds(2))
                 .filter(error -> error instanceof TaskNotFinishedException)
                 .onRetryExhaustedThrow((retryBackoffSpec, retrySignal) ->
                     new RuntimeException("图片生成超时，请稍后再试。")));
     }
 
-    /**
-     * 检查任务状态，如果成功则返回 URL，如果还在运行则抛出特定异常以触发重试。
-     */
     private Mono<String> checkTaskStatusAndGetUrl(String jsonResponse) {
         try {
             JsonNode root = objectMapper.readTree(jsonResponse);
@@ -120,7 +132,6 @@ public class AiImageService {
                     return Mono.error(new RuntimeException(errorMessage));
                 case "PENDING":
                 case "RUNNING":
-                    // 抛出自定义异常，以被 retryWhen 捕获并触发下一次轮询
                     return Mono.error(new TaskNotFinishedException());
                 default:
                     return Mono.error(new RuntimeException("未知的任务状态: " + taskStatus));
@@ -152,7 +163,7 @@ public class AiImageService {
                 return messageNode.asText();
             }
         } catch (JsonProcessingException e) {
-            // Ignore if it's not a valid JSON
+            // Not a valid JSON, return original body
         }
         return errorBody;
     }
