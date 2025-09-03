@@ -34,6 +34,8 @@
               <option value="1024*1024">1024*1024</option>
               <option value="720*1280">720*1280 (竖屏)</option>
               <option value="1280*720">1280*720 (横屏)</option>
+              <option value="600*600">600*600</option>
+              <option value="400*400">400*400</option>
             </select>
           </div>
         </div>
