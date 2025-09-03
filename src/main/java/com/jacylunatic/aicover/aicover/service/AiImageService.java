@@ -113,7 +113,7 @@ public class AiImageService {
             .retrieve()
             .bodyToMono(String.class)
             .flatMap(this::checkTaskStatusAndDecideNextAction)
-            .retryWhen(Retry.fixedDelay(15, Duration.ofSeconds(2))
+            .retryWhen(Retry.fixedDelay(50, Duration.ofSeconds(2))
                 .filter(error -> error instanceof PollAgainException)
                 .onRetryExhaustedThrow((retryBackoffSpec, retrySignal) ->
                     new RuntimeException("图片生成超时，请稍后再试。")))
