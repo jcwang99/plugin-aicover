@@ -31,48 +31,38 @@ public class AiImageService {
     private static class PollAgainException extends RuntimeException {}
 
     public Flux<ProgressUpdate> generateImage(String prompt, String model, String size, boolean uploadToAlist) {
-        // 阶段1：生成AI图片，并实时推送进度。 .share() 允许多个下游订阅者共享同一个上游流，防止重复执行。
-        Flux<ProgressUpdate> aiGenerationStream = getTempImageUrlWithProgress(prompt, model, size).share();
+        // 阶段1：生成AI图片，并实时推送进度。 .cache(1) 允许多个下游订阅者共享同一个上游流的最后一条结果。
+        Flux<ProgressUpdate> aiGenerationStream = getTempImageUrlWithProgress(prompt, model, size).cache(1);
 
-        // 如果不需要上传到 Alist，则直接返回 AI 生成流
-        if (!uploadToAlist) {
-            return aiGenerationStream;
-        }
+        // --- 核心改造：采用更健壮的响应式流编排 ---
+        return aiGenerationStream.flatMap(update -> {
+            boolean isIntermediateSuccess = update.getFinalImageUrl() != null && !Boolean.TRUE.equals(update.getIsFinal());
 
-        // --- 核心修正：正确的响应式流编排 ---
-        // 阶段2：当阶段1完成后，根据最后一个进度更新中的URL，开始 Alist 上传流程。
-        Flux<ProgressUpdate> alistUploadStream = aiGenerationStream
-            .last() // 等待AI生成流完成，并获取最后一个元素（即成功或失败的那个ProgressUpdate）
-            .flatMapMany(lastUpdate -> {
-                log.info("[Debug AiImageService] AI Generation stream completed. Last update: {}", lastUpdate);
-                String tempUrl = lastUpdate.getFinalImageUrl();
-
-                if (tempUrl == null) {
-                    // 如果AI生成失败，lastUpdate里就没有URL，直接返回错误信息
-                    return Flux.just(ProgressUpdate.error("AI绘图失败，无法继续上传到Alist。"));
-                }
-                log.info("[Debug AiImageService] Preparing to call AlistService with URL: {}", tempUrl);
-                return alistService.uploadImageFromUrl(tempUrl);
-            })
-            // Alist上传阶段的专属错误处理
-            .onErrorResume(error -> {
-                log.warn("Alist upload failed, will attempt to fall back.", error);
-                // 再次从阶段1的流中获取URL用于回退
-                return aiGenerationStream.last().flatMapMany(lastUpdate -> {
-                    String fallbackUrl = lastUpdate.getFinalImageUrl() != null ? lastUpdate.getFinalImageUrl() : "链接获取失败";
-                    String warningMessage = "图片已生成，但上传到 Alist 失败: " + error.getMessage();
-                    return Flux.just(
-                        ProgressUpdate.error(warningMessage),
-                        ProgressUpdate.success(fallbackUrl, "已回退并使用原始链接。")
-                    );
-                });
-            });
-
-        // 将AI生成流（不包含最后一条成功消息）和Alist上传流拼接在一起
-        return Flux.concat(
-            aiGenerationStream.filter(update -> update.getFinalImageUrl() == null),
-            alistUploadStream
-        );
+            // 如果是普通的进度更新或错误，直接转发
+            if (!isIntermediateSuccess) {
+                return Flux.just(update);
+            }
+            
+            // 这是AI绘图成功的中间结果
+            if (!uploadToAlist) {
+                // 如果不上传，这就是最终结果
+                return Flux.just(ProgressUpdate.finalSuccess(update.getFinalImageUrl(), update.getMessage()));
+            } else {
+                // 如果需要上传，先转发中间结果，然后链接Alist上传流程
+                return Flux.concat(
+                    Flux.just(update), // 转发中间成功状态
+                    alistService.uploadImageFromUrl(update.getFinalImageUrl())
+                        .onErrorResume(error -> { // Alist上传的专属回退逻辑
+                            log.warn("Alist upload failed, will fall back.", error);
+                            String warningMessage = "图片已生成，但上传到 Alist 失败: " + error.getMessage();
+                            return Flux.just(
+                                ProgressUpdate.error(warningMessage),
+                                ProgressUpdate.finalSuccess(update.getFinalImageUrl(), "图片已生成，但上传到 Alist 失败，已回退并使用原始链接。")
+                            );
+                        })
+                );
+            }
+        });
     }
 
     private Flux<ProgressUpdate> getTempImageUrlWithProgress(String prompt, String model, String size) {
@@ -142,7 +132,8 @@ public class AiImageService {
                     if (urlNode.isMissingNode() || !urlNode.isTextual()) {
                         return Mono.just(ProgressUpdate.error("任务成功，但未在响应中找到图片 URL。"));
                     }
-                    return Mono.just(ProgressUpdate.success(urlNode.asText(), "AI 绘图成功！"));
+                    // --- 核心改造：使用 intermediateSuccess ---
+                    return Mono.just(ProgressUpdate.intermediateSuccess(urlNode.asText(), "AI 绘图成功！"));
                 case "FAILED":
                     String errorMessage = root.at("/output/message").asText("任务执行失败");
                     return Mono.just(ProgressUpdate.error(errorMessage));

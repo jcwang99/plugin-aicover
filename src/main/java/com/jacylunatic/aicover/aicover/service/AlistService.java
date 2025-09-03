@@ -62,7 +62,7 @@ public class AlistService {
                     Mono.just(new ProgressUpdate("正在下载临时图片..."))
                          .doOnNext(p -> log.info("[Debug AlistService] Step 2: Emitting 'Downloading Image'")),
                     downloadImage(tempImageUrl)
-                        .doOnSuccess(bytes -> log.info("[Debug AlistService] Step 2 SUCCESS: Image downloaded ({} bytes)", bytes.length))
+                        .doOnSuccess(bytes -> log.info("[Debug AlistService] Step 2 SUCCESS: Image downloaded ({} bytes)", bytes != null ? bytes.length : 0))
                         .flux()
                         .concatMap(imageData -> Flux.concat(
                             Mono.just(new ProgressUpdate("正在上传至 Alist..."))
@@ -79,7 +79,6 @@ public class AlistService {
                                     Mono.just(new ProgressUpdate("正在获取最终链接..."))
                                          .doOnNext(p -> log.info("[Debug AlistService] Step 5: Emitting 'Polling for URL'")),
                                     pollForSignedUrl(uploadPath, token, setting)
-                                        .map(finalUrl -> ProgressUpdate.success(finalUrl, "Alist 上传成功！"))
                                         .doOnSuccess(p -> log.info("[Debug AlistService] Step 5 SUCCESS: Got final URL"))
                                 ))
                         ))
@@ -90,6 +89,7 @@ public class AlistService {
     private Mono<Map<String, Object>> prepareAlistContext() {
         log.info("[Debug AlistService] prepareAlistContext method ENTERED.");
         return settingFetcher.fetch(AlistSetting.GROUP, AlistSetting.class)
+            .doOnNext(setting -> log.info("[Debug AlistService] Successfully fetched settings: {}", setting))
             .switchIfEmpty(Mono.defer(() -> {
                 log.warn("[Debug AlistService] No Alist settings found, using default empty object.");
                 return Mono.just(new AlistSetting());
@@ -100,10 +100,7 @@ public class AlistService {
                     return Mono.error(new IllegalStateException("Alist 配置不完整，请检查插件设置。"));
                 }
                 log.info("[Debug AlistService] Alist configuration is valid, proceeding to login.");
-                return login(setting).map(token -> {
-                    log.info("[Debug AlistService] Login successful, context prepared.");
-                    return Map.of("setting", setting, "token", token);
-                });
+                return login(setting).map(token -> Map.of("setting", setting, "token", token));
             })
             .doOnNext(context -> log.info("[Debug AlistService] Context Mono is about to emit value: {}", context))
             .doOnError(error -> log.error("[Debug AlistService] Error in prepareAlistContext stream.", error));
@@ -112,31 +109,68 @@ public class AlistService {
 
     private Mono<String> login(AlistSetting setting) {
         String loginUrl = setting.getAlistUrl() + "/api/auth/login";
+        Map<String, String> loginBody = Map.of("username", setting.getAlistUsername(), "password", setting.getAlistPassword());
+        log.info("[Debug AlistService] Preparing to login to Alist at {} with username '{}'", loginUrl, setting.getAlistUsername());
+
         return fastWebClient.post().uri(loginUrl)
-            .bodyValue(Map.of("username", setting.getAlistUsername(), "password", setting.getAlistPassword()))
+            .bodyValue(loginBody)
             .retrieve()
             .onStatus(HttpStatusCode::isError, response -> response.bodyToMono(String.class)
-                .flatMap(errorBody -> Mono.error(new RuntimeException("Alist 登录失败: " + parseAlistErrorMessage(errorBody)))))
+                .flatMap(errorBody -> {
+                    log.error("Alist 登录请求返回错误状态码: {}, 响应体: {}", response.statusCode(), errorBody);
+                    return Mono.error(new RuntimeException("Alist 登录失败: " + parseAlistErrorMessage(errorBody)));
+                }))
             .bodyToMono(String.class)
-            .filter(responseBody -> responseBody != null && !responseBody.isBlank() && !responseBody.equalsIgnoreCase("null"))
-            .switchIfEmpty(Mono.error(new RuntimeException("Alist 登录认证失败，请检查用户名和密码。")))
+            .doOnSubscribe(subscription -> log.info("[Debug AlistService] Sending login request..."))
+            .doOnSuccess(responseBody -> log.info("[Debug AlistService] Received login response. Body: '{}'", responseBody))
+            .doOnError(error -> log.error("[Debug AlistService] Login request failed.", error))
             .flatMap(this::parseTokenFromResponse);
     }
 
+    private Mono<String> parseTokenFromResponse(String jsonResponse) {
+        log.info("[Debug AlistService] Attempting to parse token from response: {}", jsonResponse);
+        if (!StringUtils.hasText(jsonResponse) || "null".equalsIgnoreCase(jsonResponse.trim())) {
+             log.error("[Debug AlistService] Login response body is null or empty. This often indicates incorrect credentials.");
+             return Mono.error(new RuntimeException("Alist 登录认证失败，请检查用户名和密码。"));
+        }
+        try {
+            JsonNode root = objectMapper.readTree(jsonResponse);
+            JsonNode tokenNode = root.at("/data/token");
+            log.info("[Debug AlistService] Parsed JSON, '/data/token' node is: {}", tokenNode);
+
+            if (tokenNode.isMissingNode() || !tokenNode.isTextual()) {
+                log.error("[Debug AlistService] Token node is missing or not text. Full response: {}", jsonResponse);
+                String errorMessage = root.at("/message").asText("无法从 Alist 登录响应中解析 Token");
+                return Mono.error(new RuntimeException("Alist 登录失败: " + errorMessage));
+            }
+            String token = tokenNode.asText();
+            log.info("[Debug AlistService] Successfully parsed token.");
+            return Mono.just(token);
+        } catch (JsonProcessingException e) {
+            log.error("[Debug AlistService] Failed to parse login response JSON.", e);
+            return Mono.error(new RuntimeException("解析 Alist Token 响应失败", e));
+        }
+    }
+
     private Mono<byte[]> downloadImage(String imageUrl) {
+        log.info("[Debug AlistService] Attempting to download image from: {}", imageUrl);
         return Mono.fromCallable(() -> {
             HttpURLConnection connection = (HttpURLConnection) new URL(imageUrl).openConnection();
             connection.setRequestMethod("GET");
             connection.setConnectTimeout(10000);
             connection.setReadTimeout(20000);
             try {
-                if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 300) {
+                int responseCode = connection.getResponseCode();
+                 log.info("[Debug AlistService] Image download response code: {}", responseCode);
+                if (responseCode >= 200 && responseCode < 300) {
                     try (InputStream inputStream = connection.getInputStream(); ByteArrayOutputStream buffer = new ByteArrayOutputStream()) {
                         inputStream.transferTo(buffer);
-                        return buffer.toByteArray();
+                        byte[] bytes = buffer.toByteArray();
+                        log.info("[Debug AlistService] Image download successful, {} bytes.", bytes.length);
+                        return bytes;
                     }
                 } else {
-                    throw new RuntimeException("下载临时图片失败: " + connection.getResponseCode());
+                    throw new RuntimeException("下载临时图片失败: " + responseCode);
                 }
             } finally {
                 connection.disconnect();
@@ -147,6 +181,7 @@ public class AlistService {
     private Mono<String> uploadToAlist(byte[] imageData, String token, AlistSetting setting) {
         String fileName = UUID.randomUUID() + ".png";
         String uploadPath = setting.getAlistUploadPath() + "/" + fileName;
+        log.info("[Debug AlistService] Attempting to upload {} bytes to Alist path: {}", imageData.length, uploadPath);
 
         return uploadWebClient.put().uri(setting.getAlistUrl() + "/api/fs/put")
             .header("Authorization", token)
@@ -156,6 +191,7 @@ public class AlistService {
             .onStatus(HttpStatusCode::isError, response -> response.bodyToMono(String.class)
                 .flatMap(errorBody -> Mono.error(new RuntimeException("Alist 上传失败: " + parseAlistErrorMessage(errorBody)))))
             .bodyToMono(String.class)
+            .doOnSuccess(response -> log.info("[Debug AlistService] Received upload response: {}", response))
             .flatMap(this::checkAlistResponse)
             .thenReturn(uploadPath);
     }
@@ -163,6 +199,7 @@ public class AlistService {
     private Mono<Void> refreshAlistStorage(String uploadPath, String token, AlistSetting setting) {
         String parentPath = uploadPath.substring(0, uploadPath.lastIndexOf('/'));
         if (parentPath.isEmpty()) parentPath = "/";
+        log.info("[Debug AlistService] Attempting to refresh Alist cache for path: {}", parentPath);
 
         return fastWebClient.post().uri(setting.getAlistUrl() + "/api/fs/list")
             .header("Authorization", token)
@@ -172,18 +209,22 @@ public class AlistService {
             .onStatus(HttpStatusCode::isError, response -> response.bodyToMono(String.class)
                 .flatMap(errorBody -> Mono.error(new RuntimeException("Alist 缓存刷新失败: " + parseAlistErrorMessage(errorBody)))))
             .bodyToMono(String.class)
+            .doOnSuccess(response -> log.info("[Debug AlistService] Received cache refresh response: {}", response))
             .flatMap(this::checkAlistResponse)
             .then();
     }
 
-    private Mono<String> pollForSignedUrl(String path, String token, AlistSetting setting) {
+    private Mono<ProgressUpdate> pollForSignedUrl(String path, String token, AlistSetting setting) {
+        log.info("[Debug AlistService] Starting to poll for signed URL for path: {}", path);
         return getSignedUrl(path, token, setting)
             .retryWhen(Retry.fixedDelay(5, Duration.ofSeconds(2))
                 .filter(error -> error instanceof AlistObjectNotFoundException)
+                .doBeforeRetry(signal -> log.warn("[Debug AlistService] Object not found, retrying... Attempt #{}}", signal.totalRetries() + 1))
                 .onRetryExhaustedThrow((spec, signal) -> new RuntimeException("获取 Alist 签名链接超时。")));
     }
 
-    private Mono<String> getSignedUrl(String path, String token, AlistSetting setting) {
+    private Mono<ProgressUpdate> getSignedUrl(String path, String token, AlistSetting setting) {
+        log.info("[Debug AlistService] Requesting signed URL for path: {}", path);
         return fastWebClient.post().uri(setting.getAlistUrl() + "/api/fs/get")
             .header("Authorization", token)
             .header("Content-Type", "application/json")
@@ -195,7 +236,8 @@ public class AlistService {
             .flatMap(jsonResponse -> parseSignedUrlFromResponse(jsonResponse, setting));
     }
 
-    private Mono<String> parseSignedUrlFromResponse(String jsonResponse, AlistSetting setting) {
+    private Mono<ProgressUpdate> parseSignedUrlFromResponse(String jsonResponse, AlistSetting setting) {
+        log.info("[Debug AlistService] Attempting to parse signed URL from response: {}", jsonResponse);
         try {
             JsonNode root = objectMapper.readTree(jsonResponse);
             if (root.at("/code").asInt(-1) == 500 && "object not found".equals(root.at("/message").asText(""))) {
@@ -205,33 +247,28 @@ public class AlistService {
             if (!StringUtils.hasText(rawUrl)) {
                 return Mono.error(new RuntimeException("获取签名失败，响应中缺少 'raw_url'。"));
             }
-            return Mono.just(fixUrlProtocol(rawUrl, setting.getAlistUrl()));
+            String finalUrl = fixUrlProtocol(rawUrl, setting.getAlistUrl());
+            log.info("[Debug AlistService] Successfully parsed final URL: {}", finalUrl);
+            return Mono.just(ProgressUpdate.finalSuccess(finalUrl, "Alist 上传成功！"));
         } catch (JsonProcessingException e) {
             return Mono.error(new RuntimeException("解析 Alist 签名响应失败", e));
         }
     }
 
-    private Mono<String> parseTokenFromResponse(String jsonResponse) {
-        try {
-            JsonNode tokenNode = objectMapper.readTree(jsonResponse).at("/data/token");
-            if (tokenNode.isMissingNode() || !tokenNode.isTextual()) {
-                return Mono.error(new RuntimeException("无法从 Alist 登录响应中解析 Token。"));
-            }
-            return Mono.just(tokenNode.asText());
-        } catch (JsonProcessingException e) {
-            return Mono.error(new RuntimeException("解析 Alist Token 响应失败", e));
-        }
-    }
-
     private Mono<String> checkAlistResponse(String jsonResponse) {
+        log.info("[Debug AlistService] Checking Alist response: {}", jsonResponse);
         try {
             JsonNode root = objectMapper.readTree(jsonResponse);
             if (root.at("/code").asInt(-1) == 200) {
+                 log.info("[Debug AlistService] Alist response is OK (code 200).");
                 return Mono.just(jsonResponse);
             } else {
-                return Mono.error(new RuntimeException(root.at("/message").asText("未知的 Alist 错误")));
+                String message = root.at("/message").asText("未知的 Alist 错误");
+                 log.error("[Debug AlistService] Alist response indicates an error: {}", message);
+                return Mono.error(new RuntimeException(message));
             }
         } catch (JsonProcessingException e) {
+             log.error("[Debug AlistService] Failed to parse Alist response JSON.", e);
             return Mono.error(new RuntimeException("解析 Alist 响应失败", e));
         }
     }

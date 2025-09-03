@@ -1,56 +1,59 @@
 package com.jacylunatic.aicover.aicover.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-/**
- * 后端向前端推送实时进度的标准数据模型。
- * 用于服务器发送事件 (SSE)。
- */
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
-@JsonInclude(JsonInclude.Include.NON_NULL) // 仅序列化非空字段
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class ProgressUpdate {
 
-    /**
-     * 当前进度的描述文本。
-     * 例如："正在提交任务...", "正在登录 Alist..."
-     */
     private String message;
-
-    /**
-     * 标记这条信息是否为错误信息。
-     * 前端可以根据这个字段用不同的颜色显示消息。
-     */
     private Boolean isError;
-
-    /**
-     * 最终生成的图片 URL。
-     * 这个字段只在任务全部成功完成的最后一条消息中才会有值。
-     */
     private String finalImageUrl;
 
     /**
-     * 方便创建普通进度消息的构造函数。
+     * --- 核心改造 ---
+     * 新增 isFinal 字段，用于明确告知前端任务是否已结束。
      */
+    private Boolean isFinal = false;
+
     public ProgressUpdate(String message) {
         this.message = message;
+        this.isError = false;
+        this.isFinal = false;
     }
 
-    /**
-     * 方便创建错误消息的静态工厂方法。
-     */
+    public ProgressUpdate(String message, boolean isError) {
+        this.message = message;
+        this.isError = isError;
+        this.isFinal = false;
+    }
+    
     public static ProgressUpdate error(String message) {
-        return new ProgressUpdate(message, true, null);
+        ProgressUpdate update = new ProgressUpdate(message, true);
+        // 普通错误不是最终状态，除非是致命错误
+        return update;
     }
     
     /**
-     * 方便创建最终成功消息的静态工厂方法。
+     * 最终成功状态的工厂方法
      */
-    public static ProgressUpdate success(String finalImageUrl, String message) {
-        return new ProgressUpdate(message, false, finalImageUrl);
+    public static ProgressUpdate finalSuccess(String finalImageUrl, String message) {
+        ProgressUpdate update = new ProgressUpdate(message, false);
+        update.setFinalImageUrl(finalImageUrl);
+        update.setIsFinal(true); // 标记为最终状态
+        return update;
+    }
+
+    /**
+     * 包含中间结果的成功状态 (AI绘图成功，但还需上传Alist)
+     */
+    public static ProgressUpdate intermediateSuccess(String imageUrl, String message) {
+        ProgressUpdate update = new ProgressUpdate(message, false);
+        update.setFinalImageUrl(imageUrl);
+        update.setIsFinal(false); // 明确标记为非最终状态
+        return update;
     }
 }

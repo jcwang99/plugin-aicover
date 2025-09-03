@@ -58,13 +58,11 @@
         </div>
         
         <!-- --- 核心改造：实时进度显示区域 --- -->
-        <div v-if="isLoading" class="ai-cover-progress-container">
-          <ul class="ai-cover-progress-list">
-            <li v-for="(update, index) in progressUpdates" :key="index" :class="['progress-item', { 'is-error': update.isError }]">
-              <span class="progress-icon">{{ update.isError ? '❌' : '✅' }}</span>
-              <span class="progress-message">{{ update.message }}</span>
-            </li>
-          </ul>
+        <div v-if="latestProgress" class="ai-cover-progress-container">
+          <div :class="['progress-item', { 'is-error': latestProgress.isError }]">
+            <span class="progress-icon">{{ latestProgress.isError ? '❌' : (isLoading ? '⏳' : '✅') }}</span>
+            <span class="progress-message">{{ latestProgress.message }}</span>
+          </div>
         </div>
 
         <div v-if="previewUrl" id="ai-cover-preview-container" class="ai-cover-preview">
@@ -112,9 +110,8 @@ const previewUrl = ref('');
 const availableModels = ref<{name: string, id: string}[]>([]);
 const isImageZoomed = ref(false);
 const uploadToAlist = ref(true);
-const progressUpdates = ref<{ message: string, isError?: boolean }[]>([]); // 存储进度消息
+const latestProgress = ref<{ message: string, isError?: boolean } | null>(null);
 
-// 获取模型列表的函数
 const fetchModels = async () => {
   try {
     const response = await fetch('/api/plugins/aicover/models');
@@ -126,16 +123,17 @@ const fetchModels = async () => {
     }
   } catch (err: any) {
     console.error("加载 AI 模型列表失败:", err);
-    progressUpdates.value.push({ message: `加载模型列表失败: ${err.message}`, isError: true });
+    latestProgress.value = { message: `加载模型列表失败: ${err.message}`, isError: true };
     availableModels.value = [{ name: '默认模型 (加载失败)', id: 'wanx-v1' }];
     model.value = 'wanx-v1';
   }
 };
 
-// 侦听 visible 属性，当弹窗变为可见时，获取最新的模型列表
 watch(() => props.visible, (isVisible) => {
   if (isVisible) {
     fetchModels();
+    previewUrl.value = '';
+    latestProgress.value = null;
   }
 });
 
@@ -148,9 +146,6 @@ const useImage = () => {
   closeModal();
 };
 
-/**
- * --- 核心改造：使用 EventSource 替代 fetch ---
- */
 const generateImage = () => {
   if (!prompt.value) {
     alert("请输入提示词！");
@@ -159,7 +154,7 @@ const generateImage = () => {
 
   isLoading.value = true;
   previewUrl.value = '';
-  progressUpdates.value = []; // 清空旧的进度
+  latestProgress.value = null;
 
   const params = new URLSearchParams({
     prompt: prompt.value,
@@ -173,26 +168,29 @@ const generateImage = () => {
   eventSource.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      progressUpdates.value.push({
+      
+      latestProgress.value = {
         message: data.message,
         isError: data.isError
-      });
+      };
 
-      // 如果收到了最终的图片 URL，则任务完成
       if (data.finalImageUrl) {
         previewUrl.value = data.finalImageUrl;
+      }
+      
+      if (data.isFinal) {
         isLoading.value = false;
         eventSource.close();
       }
     } catch (e) {
       console.error("解析 SSE 数据失败:", e);
-      progressUpdates.value.push({ message: "收到无法解析的数据", isError: true });
+      latestProgress.value = { message: "收到无法解析的数据", isError: true };
     }
   };
 
   eventSource.onerror = (error) => {
     console.error("EventSource 发生错误:", error);
-    progressUpdates.value.push({ message: "与服务器的连接中断，请检查网络或后台日志。", isError: true });
+    latestProgress.value = { message: "与服务器的连接中断，请检查网络或后台日志。", isError: true };
     isLoading.value = false;
     eventSource.close();
   };
@@ -200,31 +198,19 @@ const generateImage = () => {
 </script>
 
 <style scoped>
-/* 样式与之前版本相同，为简洁起见省略 */
 .modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.3s ease; }
 .modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
 .ai-cover-modal-overlay {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background-color: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-  backdrop-filter: blur(5px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999; backdrop-filter: blur(5px);
 }
 .ai-cover-modal-content {
-  background-color: white;
-  color: #333;
-  padding: 24px;
-  border-radius: 12px;
-  box-shadow: 0 5px 20px rgba(0,0,0,0.25);
-  width: 90%;
-  max-width: 550px;
-  max-height: 90vh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+  background-color: white; color: #333; padding: 24px;
+  border-radius: 12px; box-shadow: 0 5px 20px rgba(0,0,0,0.25);
+  width: 90%; max-width: 550px; max-height: 90vh; overflow-y: auto;
+  display: flex; flex-direction: column;
 }
 .ai-cover-modal-title {
   margin-top: 0;
@@ -238,20 +224,6 @@ const generateImage = () => {
   margin-bottom: 16px;
   flex: 1;
   flex-shrink: 0;
-}
-.ai-cover-form-group-checkbox {
-  display: flex;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.ai-cover-form-group-checkbox input {
-  margin-right: 8px;
-  width: 16px;
-  height: 16px;
-}
-.ai-cover-form-group-checkbox label {
-  font-size: 0.9rem;
-  color: #555;
 }
 .ai-cover-form-group-inline {
   display: flex;
@@ -278,6 +250,9 @@ const generateImage = () => {
   border-color: #007bff;
   box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
+.ai-cover-form-group-checkbox { display: flex; align-items: center; margin-bottom: 20px; }
+.ai-cover-form-group-checkbox input { margin-right: 8px; width: 16px; height: 16px; }
+.ai-cover-form-group-checkbox label { font-size: 0.9rem; color: #555; }
 .ai-cover-actions {
   margin-top: 24px;
   display: flex;
@@ -315,6 +290,13 @@ const generateImage = () => {
   background-color: #ccc;
   cursor: not-allowed;
 }
+.ai-cover-progress-container {
+  margin-top: 16px; background-color: #f7f7f7; border-radius: 8px;
+  padding: 10px 12px; border: 1px solid #eee;
+}
+.progress-item { display: flex; align-items: center; font-size: 0.9rem; color: #333; }
+.progress-item.is-error { color: #d9534f; }
+.progress-icon { margin-right: 8px; flex-shrink: 0; }
 .ai-cover-preview {
   margin-top: 24px;
   text-align: center;
@@ -330,67 +312,12 @@ const generateImage = () => {
   display: inline-block;
   cursor: zoom-in;
 }
-.ai-cover-loading, .ai-cover-error-text, .ai-cover-warning-text {
-  margin-top: 24px;
-  text-align: center;
-  font-weight: 500;
-  padding: 8px;
-  border-radius: 4px;
-}
-.ai-cover-error-text {
-  color: #d9534f;
-  background-color: #f2dede;
-}
-.ai-cover-warning-text {
-  color: #8a6d3b;
-  background-color: #fcf8e3;
-}
 .image-zoom-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background-color: rgba(0, 0, 0, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-  cursor: zoom-out;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10000; cursor: zoom-out;
 }
-.zoomed-image {
-  max-width: 90vw;
-  max-height: 90vh;
-  object-fit: contain;
-  box-shadow: 0 0 30px rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
-}
-.ai-cover-progress-container {
-  margin-top: 16px;
-  background-color: #f7f7f7;
-  border-radius: 8px;
-  padding: 8px 12px;
-  max-height: 150px;
-  overflow-y: auto;
-  border: 1px solid #eee;
-}
-.ai-cover-progress-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.progress-item {
-  display: flex;
-  align-items: center;
-  padding: 4px 0;
-  font-size: 0.9rem;
-  color: #333;
-}
-.progress-item.is-error {
-  color: #d9534f;
-}
-.progress-icon {
-  margin-right: 8px;
-  flex-shrink: 0;
-}
+.zoomed-image { max-width: 90vw; max-height: 90vh; object-fit: contain; }
 </style>
+
