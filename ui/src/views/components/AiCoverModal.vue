@@ -57,10 +57,9 @@
           </button>
         </div>
         
-        <!-- --- 核心改造：实时进度显示区域 --- -->
         <div v-if="latestProgress" class="ai-cover-progress-container">
-          <div :class="['progress-item', { 'is-error': latestProgress.isError }]">
-            <span class="progress-icon">{{ latestProgress.isError ? '❌' : (isLoading ? '⏳' : '✅') }}</span>
+          <div :class="['progress-item', { 'is-error': latestProgress.isError, 'is-from-cache': latestProgress.isFromCache }]">
+            <span class="progress-icon">{{ latestProgress.isError ? '❌' : (isLoading ? '⏳' : (latestProgress.isFromCache ? 'ℹ️' : '✅')) }}</span>
             <span class="progress-message">{{ latestProgress.message }}</span>
           </div>
         </div>
@@ -97,11 +96,11 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 
-// 定义组件接收的属性 (props) 和发出的事件 (emits)
 const props = defineProps<{ visible: boolean }>();
 const emit = defineEmits(['close', 'use-image']);
 
-// 组件内部状态
+const STORAGE_KEY = 'ai-cover-last-image-url'; // 定义一个 sessionStorage 的键
+
 const prompt = ref('');
 const model = ref(''); 
 const size = ref('1024*1024');
@@ -110,7 +109,7 @@ const previewUrl = ref('');
 const availableModels = ref<{name: string, id: string}[]>([]);
 const isImageZoomed = ref(false);
 const uploadToAlist = ref(true);
-const latestProgress = ref<{ message: string, isError?: boolean } | null>(null);
+const latestProgress = ref<{ message: string, isError?: boolean, isFromCache?: boolean } | null>(null);
 
 const fetchModels = async () => {
   try {
@@ -134,6 +133,17 @@ watch(() => props.visible, (isVisible) => {
     fetchModels();
     previewUrl.value = '';
     latestProgress.value = null;
+
+    // --- 核心改造：每次打开时，检查 sessionStorage ---
+    const lastImageUrl = sessionStorage.getItem(STORAGE_KEY);
+    if (lastImageUrl) {
+      previewUrl.value = lastImageUrl;
+      latestProgress.value = { 
+        message: '已恢复上次生成的图片。', 
+        isError: false,
+        isFromCache: true // 标记为来自缓存
+      };
+    }
   }
 });
 
@@ -143,6 +153,8 @@ const closeModal = () => {
 
 const useImage = () => {
   emit('use-image', previewUrl.value);
+  // --- 核心改造：使用图片后，清除缓存 ---
+  sessionStorage.removeItem(STORAGE_KEY);
   closeModal();
 };
 
@@ -169,10 +181,7 @@ const generateImage = () => {
     try {
       const data = JSON.parse(event.data);
       
-      latestProgress.value = {
-        message: data.message,
-        isError: data.isError
-      };
+      latestProgress.value = { message: data.message, isError: data.isError };
 
       if (data.finalImageUrl) {
         previewUrl.value = data.finalImageUrl;
@@ -181,6 +190,11 @@ const generateImage = () => {
       if (data.isFinal) {
         isLoading.value = false;
         eventSource.close();
+        
+        // --- 核心改造：任务成功结束后，保存最终图片到 sessionStorage ---
+        if (previewUrl.value && !data.isError) {
+          sessionStorage.setItem(STORAGE_KEY, previewUrl.value);
+        }
       }
     } catch (e) {
       console.error("解析 SSE 数据失败:", e);
