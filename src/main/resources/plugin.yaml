@@ -17,8 +17,8 @@ spec:
   issues: https://github.com/jacylunatic/aicover/issues
   settingName: ai-cover-settings
   configMapName: ai-cover-configMap
-  displayName: "aicover"
-  description: "aicover - Halo 插件"
+  displayName: "Aicover"
+  description: "Aicover - 为 Halo 博客文章自动生成 AI 封面图"
   license:
     - name: "GPL-3.0"
       url: "https://github.com/jacylunatic/aicover/blob/main/LICENSE"
