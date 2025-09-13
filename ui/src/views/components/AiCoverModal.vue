@@ -34,8 +34,6 @@
               <option value="1024*1024">1024*1024</option>
               <option value="720*1280">720*1280 (竖屏)</option>
               <option value="1280*720">1280*720 (横屏)</option>
-              <option value="600*600">600*600</option>
-              <option value="400*400">400*400</option>
             </select>
           </div>
         </div>
@@ -52,7 +50,8 @@
             @click="generateImage"
             :disabled="isLoading"
           >
-            {{ isLoading ? '运行中...' : '生成图片' }}
+            <span v-if="isLoading" class="button-loader"></span>
+            <span>{{ isLoading ? '运行中...' : '生成图片' }}</span>
           </button>
           <button id="ai-cover-close-btn" class="ai-cover-button ai-cover-button-secondary" @click="closeModal" :disabled="isLoading">
             关闭
@@ -74,7 +73,6 @@
             alt="AI 生成图片预览"
             @click="isImageZoomed = true"
           >
-          <!-- --- 核心改造：新增“复制链接”按钮 --- -->
           <div class="ai-cover-actions">
             <button
               id="ai-cover-copy-url-btn"
@@ -120,7 +118,7 @@ const availableModels = ref<{name: string, id: string}[]>([]);
 const isImageZoomed = ref(false);
 const uploadToAlist = ref(true);
 const latestProgress = ref<{ message: string, isError?: boolean, isFromCache?: boolean } | null>(null);
-const copyButtonText = ref('复制链接'); // --- 新增状态：复制按钮文本 ---
+const copyButtonText = ref('复制链接');
 
 const fetchModels = async () => {
   try {
@@ -144,7 +142,7 @@ watch(() => props.visible, (isVisible) => {
     fetchModels();
     previewUrl.value = '';
     latestProgress.value = null;
-    copyButtonText.value = '复制链接'; // 重置按钮文本
+    copyButtonText.value = '复制链接';
 
     const lastImageUrl = sessionStorage.getItem(STORAGE_KEY);
     if (lastImageUrl) {
@@ -168,7 +166,6 @@ const useImage = () => {
   closeModal();
 };
 
-// --- 新增功能：复制图片链接 ---
 const copyUrl = async () => {
   if (!previewUrl.value) return;
   try {
@@ -239,56 +236,176 @@ const generateImage = () => {
 </script>
 
 <style scoped>
+/* --- 全面美化 --- */
+
+/* 动画效果 */
 .modal-fade-enter-active, .modal-fade-leave-active { transition: opacity 0.3s ease; }
 .modal-fade-enter-from, .modal-fade-leave-to { opacity: 0; }
+.modal-fade-enter-active .ai-cover-modal-content,
+.modal-fade-leave-active .ai-cover-modal-content {
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+.modal-fade-enter-from .ai-cover-modal-content,
+.modal-fade-leave-to .ai-cover-modal-content {
+  transform: scale(0.95) translateY(10px);
+}
+
+/* 遮罩层：玻璃拟态效果 */
 .ai-cover-modal-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background-color: rgba(0, 0, 0, 0.6);
+  background-color: rgba(0, 0, 0, 0.5);
   display: flex; align-items: center; justify-content: center;
-  z-index: 9999; backdrop-filter: blur(5px);
+  z-index: 9999; 
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
+
+/* 弹窗主体：更柔和的阴影和边框 */
 .ai-cover-modal-content {
-  background-color: white; color: #333; padding: 24px;
-  border-radius: 12px; box-shadow: 0 5px 20px rgba(0,0,0,0.25);
+  background-color: rgba(255, 255, 255, 0.95);
+  color: #1f2937; 
+  padding: 28px;
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   width: 90%; max-width: 550px; max-height: 90vh; overflow-y: auto;
 }
-.ai-cover-form-group-checkbox { display: flex; align-items: center; margin-bottom: 20px; }
-.ai-cover-form-group-checkbox input { margin-right: 8px; }
-.ai-cover-progress-container {
-  margin-top: 16px; background-color: #f7f7f7; border-radius: 8px;
-  padding: 10px 12px; border: 1px solid #eee;
+
+/* 标题 */
+.ai-cover-modal-title { 
+  margin-top: 0; margin-bottom: 24px; font-size: 1.75rem; 
+  text-align: center; font-weight: 700; color: #111827;
 }
-.progress-item { display: flex; align-items: center; font-size: 0.9rem; color: #333; }
-.progress-item.is-error { color: #d9534f; }
-.progress-item.is-from-cache { color: #007bff; }
-.progress-icon { margin-right: 8px; flex-shrink: 0; }
-.ai-cover-preview img { cursor: zoom-in; }
+
+/* 表单组 */
+.ai-cover-form-group { margin-bottom: 20px; }
+.ai-cover-form-group-inline { display: flex; gap: 20px; }
+.ai-cover-form-group label { 
+  display: block; margin-bottom: 8px; font-weight: 500; 
+  color: #4b5563; font-size: 0.875rem;
+}
+
+/* 输入框与下拉框：更现代的外观 */
+.ai-cover-input, .ai-cover-select { 
+  width: 100%; 
+  padding: 12px 16px; 
+  border: 1px solid #d1d5db; 
+  border-radius: 8px; 
+  font-size: 1rem; 
+  box-sizing: border-box; 
+  background-color: #ffffff;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.ai-cover-input:focus, .ai-cover-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+}
+
+.ai-cover-select {
+  -webkit-appearance: none; -moz-appearance: none; appearance: none;
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.9rem center;
+  background-repeat: no-repeat;
+  background-size: 1.25em;
+}
+
+/* Alist 复选框 */
+.ai-cover-form-group-checkbox { 
+  display: flex; align-items: center; margin-bottom: 24px; 
+}
+.ai-cover-form-group-checkbox input { margin-right: 10px; width: 18px; height: 18px; }
+.ai-cover-form-group-checkbox label { font-size: 0.9rem; color: #374151; }
+
+/* 按钮区域 */
+.ai-cover-actions { 
+  margin-top: 28px; 
+  display: flex; 
+  justify-content: flex-end;
+  gap: 12px;
+}
+.ai-cover-button { 
+  padding: 12px 24px; 
+  border: none; border-radius: 8px; 
+  font-size: 1rem; font-weight: 600; 
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s ease;
+}
+.ai-cover-button:active { transform: scale(0.98); }
+
+/* 主按钮：渐变效果 */
+.ai-cover-button-primary { 
+  background: linear-gradient(to right, #3b82f6, #60a5fa);
+  color: white; 
+}
+.ai-cover-button-primary:hover {
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px);
+}
+
+/* 次要按钮 */
+.ai-cover-button-secondary { 
+  background-color: #e5e7eb; 
+  color: #374151;
+}
+.ai-cover-button-secondary:hover {
+  background-color: #d1d5db;
+}
+.ai-cover-button:disabled { 
+  background-color: #9ca3af;
+  color: #e5e7eb;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* 进度/状态显示 */
+.ai-cover-progress-container {
+  margin-top: 20px; background-color: #f3f4f6; border-radius: 8px;
+  padding: 12px 16px; border: 1px solid #e5e7eb;
+}
+.progress-item { display: flex; align-items: center; font-size: 0.9rem; color: #1f2937; }
+.progress-item.is-error { color: #ef4444; }
+.progress-item.is-from-cache { color: #3b82f6; }
+.progress-icon { margin-right: 10px; font-size: 1.1rem; }
+
+/* 图片预览 */
+.ai-cover-preview { margin-top: 24px; text-align: center; }
+.ai-cover-preview p { margin-bottom: 12px; font-weight: 500; }
+.ai-cover-preview img { 
+  cursor: zoom-in; 
+  border-radius: 12px;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+}
+
+/* 图片放大 */
 .image-zoom-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background-color: rgba(0, 0, 0, 0.8);
+  background-color: rgba(0, 0, 0, 0.85);
   display: flex; align-items: center; justify-content: center;
   z-index: 10000; cursor: zoom-out;
 }
-.zoomed-image { max-width: 90vw; max-height: 90vh; object-fit: contain; }
+.zoomed-image { 
+  max-width: 90vw; max-height: 90vh; 
+  object-fit: contain; border-radius: 8px;
+}
 
-.ai-cover-modal-title { margin-top: 0; margin-bottom: 24px; font-size: 1.5rem; text-align: center; }
-.ai-cover-form-group { margin-bottom: 16px; }
-.ai-cover-form-group-inline { display: flex; gap: 16px; }
-.ai-cover-form-group label { display: block; margin-bottom: 8px; font-weight: 500; }
-.ai-cover-input, .ai-cover-select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 1rem; box-sizing: border-box; }
-.ai-cover-actions { 
-  margin-top: 24px; 
-  display: flex; 
-  justify-content: flex-end;
-  gap: 12px; /* --- 核心改造：使用 gap 替代 margin --- */
+/* 加载中动画 */
+.button-loader {
+  width: 18px; height: 18px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-left-color: #fff;
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin 1s linear infinite;
+  margin-right: 8px;
 }
-.ai-cover-button { padding: 10px 20px; border: none; border-radius: 6px; font-size: 1rem; font-weight: 500; cursor: pointer; }
-.ai-cover-button-primary { background-color: #007bff; color: white; }
-.ai-cover-button-secondary { 
-  background-color: #f0f0f0; 
-  color: #333;
-  /* margin-left: 12px;  移除 margin-left */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
-.ai-cover-button:disabled { background-color: #ccc; cursor: not-allowed; }
-.ai-cover-preview { margin-top: 24px; text-align: center; }
+
 </style>
+
