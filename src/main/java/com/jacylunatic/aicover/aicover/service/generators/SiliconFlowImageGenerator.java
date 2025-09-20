@@ -9,7 +9,6 @@ import com.jacylunatic.aicover.aicover.service.ImageGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
-import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -50,16 +49,12 @@ public class SiliconFlowImageGenerator implements ImageGenerator {
 
     private Flux<ProgressUpdate> callApi(String prompt, String model, String size, String apiKey) {
         String url = "https://api.siliconflow.cn/v1/images/generations";
-
-        // --- 核心修正：将尺寸格式从 '1024*1024' 转换为 '1024x1024' ---
         String formattedSize = size.replace('*', 'x');
 
         Map<String, Object> requestBody = new HashMap<>();
         requestBody.put("model", model);
         requestBody.put("prompt", prompt);
         requestBody.put("image_size", formattedSize);
-
-        log.info("[SiliconFlow] Sending request to SiliconFlow API with body: {}", requestBody);
 
         return webClient.post()
             .uri(url)
@@ -80,13 +75,12 @@ public class SiliconFlowImageGenerator implements ImageGenerator {
             JsonNode urlNode = root.at("/images/0/url");
 
             if (urlNode.isMissingNode() || !urlNode.isTextual()) {
-                log.error("在硅基流动响应中未找到图片 URL。响应: {}", jsonResponse);
                 String errorMessage = root.at("/error/message").asText("无法从硅基流动响应中解析图片URL");
                 return Mono.just(ProgressUpdate.error(errorMessage));
             }
-            return Mono.just(ProgressUpdate.finalSuccess(urlNode.asText(), "硅基流动绘图成功！"));
+            // --- 核心修正：使用 intermediateSuccess ---
+            return Mono.just(ProgressUpdate.intermediateSuccess(urlNode.asText(), "硅基流动绘图成功！"));
         } catch (JsonProcessingException e) {
-            log.error("解析硅基流动响应 JSON 时出错", e);
             return Mono.just(ProgressUpdate.error("解析硅基流动响应失败: " + e.getMessage()));
         }
     }

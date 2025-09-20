@@ -17,7 +17,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class AiImageService {
 
-    // 直接注入 ReactiveSettingFetcher
+    // 依赖注入 ReactiveSettingFetcher 以传递给子服务
     private final ReactiveSettingFetcher settingFetcher;
     private final AlistService alistService;
 
@@ -38,7 +38,7 @@ public class AiImageService {
         );
 
         log.info("============================================================");
-        log.info("[Debug AiImageService] AiImageService has been INITIALIZED via @PostConstruct.");
+        log.info("[Debug AiImageService] AiImageService Initialized via @PostConstruct.");
         log.info("[Debug AiImageService] Manually created ImageGenerator beans: {}", imageGenerators.size());
         if (imageGenerators.isEmpty()) {
             log.error("[Debug AiImageService] CRITICAL: No ImageGenerator implementations were created!");
@@ -53,7 +53,7 @@ public class AiImageService {
     public Flux<ProgressUpdate> generateImage(String prompt, String modelWithPlatform, String size, boolean uploadToAlist) {
         String[] parts = modelWithPlatform.split(":", 2);
         if (parts.length != 2) {
-            return Flux.just(ProgressUpdate.error("无效的模型ID格式，请联系插件开发者。"));
+            return Flux.just(ProgressUpdate.error("无效的模型ID格式。"));
         }
         String platform = parts[0];
         String model = parts[1];
@@ -64,15 +64,18 @@ public class AiImageService {
             .orElse(null);
 
         if (generator == null) {
-            log.error("找不到支持平台 '{}' 的 ImageGenerator 服务。 当前已加载的服务: {} 个", platform, imageGenerators.size());
             return Flux.just(ProgressUpdate.error("找不到支持平台 '" + platform + "' 的服务。"));
         }
-        log.info("任务已分发至平台: '{}'，使用模型: '{}'", platform, model);
-
+        
         Flux<ProgressUpdate> aiGenerationStream = generator.generateImage(prompt, model, size).cache(1);
 
         if (!uploadToAlist) {
-            return aiGenerationStream;
+            return aiGenerationStream.flatMap(update -> {
+                 if (update.getFinalImageUrl() != null && !Boolean.TRUE.equals(update.getIsFinal())) {
+                    return Flux.just(ProgressUpdate.finalSuccess(update.getFinalImageUrl(), update.getMessage()));
+                 }
+                 return Flux.just(update);
+            });
         }
 
         Flux<ProgressUpdate> alistUploadStream = aiGenerationStream
@@ -84,7 +87,6 @@ public class AiImageService {
                 }
                 return alistService.uploadImageFromUrl(tempUrl)
                     .onErrorResume(error -> {
-                        log.warn("Alist 上传失败，将回退至原始链接。错误: {}", error.getMessage());
                         String warningMessage = "图片已生成，但上传到 Alist 失败: " + error.getMessage();
                         return Flux.just(
                             ProgressUpdate.error(warningMessage),

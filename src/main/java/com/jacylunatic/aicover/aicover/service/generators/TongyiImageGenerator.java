@@ -3,13 +3,12 @@ package com.jacylunatic.aicover.aicover.service.generators;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jacylunatic.aicover.aicover.model.AiCoverSetting;
 import com.jacylunatic.aicover.aicover.model.ProgressUpdate;
+import com.jacylunatic.aicover.aicover.model.TongyiSetting;
 import com.jacylunatic.aicover.aicover.service.ImageGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatusCode;
-import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -36,9 +35,8 @@ public class TongyiImageGenerator implements ImageGenerator {
 
     @Override
     public Flux<ProgressUpdate> generateImage(String prompt, String model, String size) {
-        // --- 这部分逻辑完整地从 AiImageService 迁移而来 ---
-        Mono<String> apiKeyMono = settingFetcher.fetch(AiCoverSetting.GROUP, AiCoverSetting.class)
-            .switchIfEmpty(Mono.just(new AiCoverSetting()))
+        Mono<String> apiKeyMono = settingFetcher.fetch(TongyiSetting.GROUP, TongyiSetting.class)
+            .switchIfEmpty(Mono.just(new TongyiSetting()))
             .flatMap(setting -> {
                 String apiKey = setting.getApiKey();
                 if (apiKey == null || apiKey.isBlank()) {
@@ -84,7 +82,7 @@ public class TongyiImageGenerator implements ImageGenerator {
             .retrieve()
             .bodyToMono(String.class)
             .flatMap(this::checkTaskStatusAndDecideNextAction)
-            .retryWhen(Retry.fixedDelay(15, Duration.ofSeconds(2))
+            .retryWhen(Retry.fixedDelay(60, Duration.ofSeconds(2))
                 .filter(error -> error instanceof PollAgainException)
                 .onRetryExhaustedThrow((retryBackoffSpec, retrySignal) ->
                     new RuntimeException("图片生成超时，请稍后再试。")))
@@ -103,6 +101,7 @@ public class TongyiImageGenerator implements ImageGenerator {
                     if (urlNode.isMissingNode() || !urlNode.isTextual()) {
                         return Mono.just(ProgressUpdate.error("任务成功，但未在响应中找到图片 URL。"));
                     }
+                    // --- 核心修正：使用 intermediateSuccess ---
                     return Mono.just(ProgressUpdate.intermediateSuccess(urlNode.asText(), "AI 绘图成功！"));
                 case "FAILED":
                     String errorMessage = root.at("/output/message").asText("任务执行失败");
@@ -140,3 +139,4 @@ public class TongyiImageGenerator implements ImageGenerator {
         }
     }
 }
+
