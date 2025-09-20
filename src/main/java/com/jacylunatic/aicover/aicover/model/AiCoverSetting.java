@@ -2,7 +2,7 @@ package com.jacylunatic.aicover.aicover.model;
 
 import lombok.Data;
 /**
- * 用于承载插件设置的数据类。
+ * 用于承载插件设置的数据类。目前理论已经无用，但保留以防未来需要。
  */
 @Data
 public class AiCoverSetting {

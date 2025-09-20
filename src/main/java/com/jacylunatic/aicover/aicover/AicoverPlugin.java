@@ -1,16 +1,13 @@
 package com.jacylunatic.aicover.aicover;
 
+import org.springframework.context.annotation.ComponentScan;
 import org.springframework.stereotype.Component;
 import run.halo.app.plugin.BasePlugin;
 import run.halo.app.plugin.PluginContext;
 
 /**
- * <p>Plugin main class to manage the lifecycle of the plugin.</p>
- * <p>This class must be public and have a public constructor.</p>
- * <p>Only one main class extending {@link BasePlugin} is allowed per plugin.</p>
- *
- * @author jacylunatic
- * @since 1.0.0
+ * 插件主入口。
+ * @ComponentScan 注解确保 Spring 会扫描插件的所有包。
  */
 @Component
 public class AicoverPlugin extends BasePlugin {
@@ -29,3 +26,4 @@ public class AicoverPlugin extends BasePlugin {
         System.out.println("插件停止！");
     }
 }
+

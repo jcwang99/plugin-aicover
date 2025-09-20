@@ -1,31 +1,47 @@
 apiVersion: v1alpha1
 kind: Setting
 metadata:
-  # 这是设置资源的唯一名称
   name: ai-cover-settings
 spec:
   forms:
-    # 'group' 是非常重要的标识符，Java 代码将通过它来获取设置值
-    - group: api-settings
-      label: API 设置
+    # --- 主设置组 ---
+    - group: master-settings
+      label: 全局设置
       formSchema:
-        - $formkit: text
-          name: apiKey
-          key: apiKey
-          id: apiKey
-          label: 阿里云百炼 API-KEY
-          placeholder: "请输入您的阿里云百炼 API-KEY"
-          help: "用于调用阿里云百炼文生图服务的凭证。"
-          validation: required
         - $formkit: textarea
           name: models
           key: models
           id: models
           label: 可用模型列表
-          placeholder: "一行一个模型，格式为：显示名称,模型ID"
-          help: "例如：通义万相 V1,wanx-v1"
-          # 提供一个默认值
-          value: "通义万相 V1,wanx-v1"          
+          placeholder: "一行一个模型，格式为：平台标识符,显示名称,模型ID"
+          help: "例如：tongyi,通义万相V1,wanx-v1"
+          value: "tongyi,通义万相 V1,wanx-v1"
+
+    # --- 通义万相专属设置 ---
+    - group: tongyi-settings
+      label: 通义万相 (Tongyi) 设置
+      formSchema:
+        - $formkit: text
+          name: apiKey
+          key: apiKey
+          id: tongyiApiKey
+          label: API-KEY
+          placeholder: "请输入您的阿里云百炼 API-KEY"
+          help: "用于调用通义万相文生图服务的凭证。"
+
+    # --- 硅基流动专属设置 (已修正) ---
+    - group: siliconflow-settings
+      label: 硅基流动 (SiliconFlow) 设置
+      formSchema:
+        - $formkit: text
+          name: apiKey
+          key: apiKey
+          id: siliconflowApiKey
+          label: API Key (Bearer Token)
+          placeholder: "请输入您的硅基流动 API Key"
+          help: "这个 Key 将作为 Bearer Token 使用。"
+    
+    # Alist 设置组保持不变
     - group: alist-settings
       label: Alist 设置
       formSchema:
@@ -35,23 +51,20 @@ spec:
           id: alistUrl
           label: Alist 服务器地址
           placeholder: "例如: http://192.168.1.10:5244"
-          help: "您的 Alist 实例的完整 URL。"
         - $formkit: text
           name: alistUsername
           key: alistUsername
           id: alistUsername
           label: Alist 用户名
-          placeholder: "请输入 Alist 登录用户名"
         - $formkit: password
           name: alistPassword
           key: alistPassword
           id: alistPassword
           label: Alist 密码
-          placeholder: "请输入 Alist 登录密码"
         - $formkit: text
           name: alistUploadPath
           key: alistUploadPath
           id: alistUploadPath
           label: 图片上传路径
           placeholder: "例如: /uploads/covers"
-          help: "图片在 Alist 中存储的绝对路径，以 / 开头。"
+

@@ -19,11 +19,14 @@
         <div class="ai-cover-form-group-inline">
           <div class="ai-cover-form-group">
             <label for="ai-cover-model">选择模型</label>
+            <!-- --- 核心改造：使用 optgroup 进行模型分组 --- -->
             <select id="ai-cover-model" class="ai-cover-select" v-model="model" :disabled="isLoading">
-              <option v-for="m in availableModels" :key="m.id" :value="m.id">
-                {{ m.name }}
-              </option>
-              <option v-if="!availableModels.length" value="" disabled>
+              <optgroup v-for="(group, platform) in groupedModels" :key="platform" :label="String(platform)">
+                <option v-for="m in group" :key="m.id" :value="m.id">
+                  {{ m.name }}
+                </option>
+              </optgroup>
+              <option v-if="Object.keys(groupedModels).length === 0" value="" disabled>
                 加载中...
               </option>
             </select>
@@ -102,7 +105,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 
 const props = defineProps<{ visible: boolean }>();
 const emit = defineEmits(['close', 'use-image']);
@@ -120,6 +123,25 @@ const uploadToAlist = ref(true);
 const latestProgress = ref<{ message: string, isError?: boolean, isFromCache?: boolean } | null>(null);
 const copyButtonText = ref('复制链接');
 
+/**
+ * --- 核心改造：使用计算属性对模型列表进行分组 ---
+ */
+const groupedModels = computed(() => {
+  const groups: { [key: string]: { name: string, id: string }[] } = {};
+  for (const m of availableModels.value) {
+    const [platform, modelId] = m.id.split(':', 2);
+    if (!groups[platform]) {
+      groups[platform] = [];
+    }
+    groups[platform].push({
+        name: m.name, // The display name like "通义万相V1"
+        id: m.id,     // The full value like "tongyi:wanx-v1"
+    });
+  }
+  return groups;
+});
+
+
 const fetchModels = async () => {
   try {
     const response = await fetch('/api/plugins/aicover/models');
@@ -132,8 +154,8 @@ const fetchModels = async () => {
   } catch (err: any) {
     console.error("加载 AI 模型列表失败:", err);
     latestProgress.value = { message: `加载模型列表失败: ${err.message}`, isError: true };
-    availableModels.value = [{ name: '默认模型 (加载失败)', id: 'wanx-v1' }];
-    model.value = 'wanx-v1';
+    availableModels.value = [{ name: '默认模型 (加载失败)', id: 'tongyi:wanx-v1' }];
+    model.value = 'tongyi:wanx-v1';
   }
 };
 
@@ -171,15 +193,11 @@ const copyUrl = async () => {
   try {
     await navigator.clipboard.writeText(previewUrl.value);
     copyButtonText.value = '已复制!';
-    setTimeout(() => {
-      copyButtonText.value = '复制链接';
-    }, 2000);
+    setTimeout(() => { copyButtonText.value = '复制链接'; }, 2000);
   } catch (err) {
     console.error('复制链接失败: ', err);
     copyButtonText.value = '复制失败';
-     setTimeout(() => {
-      copyButtonText.value = '复制链接';
-    }, 2000);
+    setTimeout(() => { copyButtonText.value = '复制链接'; }, 2000);
   }
 };
 
@@ -205,30 +223,24 @@ const generateImage = () => {
   eventSource.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
-      
       latestProgress.value = { message: data.message, isError: data.isError };
-
       if (data.finalImageUrl) {
         previewUrl.value = data.finalImageUrl;
       }
-      
       if (data.isFinal) {
         isLoading.value = false;
         eventSource.close();
-        
         if (previewUrl.value && !data.isError) {
           sessionStorage.setItem(STORAGE_KEY, previewUrl.value);
         }
       }
     } catch (e) {
-      console.error("解析 SSE 数据失败:", e);
       latestProgress.value = { message: "收到无法解析的数据", isError: true };
     }
   };
 
-  eventSource.onerror = (error) => {
-    console.error("EventSource 发生错误:", error);
-    latestProgress.value = { message: "与服务器的连接中断，请检查网络或后台日志。", isError: true };
+  eventSource.onerror = () => {
+    latestProgress.value = { message: "与服务器的连接中断。", isError: true };
     isLoading.value = false;
     eventSource.close();
   };
