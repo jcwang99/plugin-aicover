@@ -19,7 +19,6 @@
         <div class="ai-cover-form-group-inline">
           <div class="ai-cover-form-group">
             <label for="ai-cover-model">选择模型</label>
-            <!-- --- 核心改造：使用 optgroup 进行模型分组 --- -->
             <select id="ai-cover-model" class="ai-cover-select" v-model="model" :disabled="isLoading">
               <optgroup v-for="(group, platform) in groupedModels" :key="platform" :label="String(platform)">
                 <option v-for="m in group" :key="m.id" :value="m.id">
@@ -33,11 +32,21 @@
           </div>
           <div class="ai-cover-form-group">
             <label for="ai-cover-size">图片尺寸</label>
-            <select id="ai-cover-size" class="ai-cover-select" v-model="size" :disabled="isLoading">
+            <!-- --- 核心改造：尺寸选择与自定义输入 --- -->
+            <select id="ai-cover-size" class="ai-cover-select" v-model="sizeSelection" :disabled="isLoading">
               <option value="1024*1024">1024*1024</option>
               <option value="720*1280">720*1280 (竖屏)</option>
               <option value="1280*720">1280*720 (横屏)</option>
+              <option value="custom">自定义...</option>
             </select>
+            <input
+              v-if="sizeSelection === 'custom'"
+              type="text"
+              class="ai-cover-input custom-size-input"
+              v-model="customSize"
+              placeholder="例如: 800*600"
+              :disabled="isLoading"
+            />
           </div>
         </div>
         
@@ -114,7 +123,6 @@ const STORAGE_KEY = 'ai-cover-last-image-url';
 
 const prompt = ref('');
 const model = ref(''); 
-const size = ref('1024*1024');
 const isLoading = ref(false);
 const previewUrl = ref('');
 const availableModels = ref<{name: string, id: string}[]>([]);
@@ -123,24 +131,25 @@ const uploadToAlist = ref(true);
 const latestProgress = ref<{ message: string, isError?: boolean, isFromCache?: boolean } | null>(null);
 const copyButtonText = ref('复制链接');
 
-/**
- * --- 核心改造：使用计算属性对模型列表进行分组 ---
- */
+// --- 核心改造 ---
+const sizeSelection = ref('1024*1024'); // 用于下拉框
+const customSize = ref(''); // 用于自定义输入框
+
+// 计算最终发送给后端的尺寸值
+const finalSize = computed(() => {
+  return sizeSelection.value === 'custom' ? customSize.value : sizeSelection.value;
+});
+
+
 const groupedModels = computed(() => {
   const groups: { [key: string]: { name: string, id: string }[] } = {};
   for (const m of availableModels.value) {
-    const [platform, modelId] = m.id.split(':', 2);
-    if (!groups[platform]) {
-      groups[platform] = [];
-    }
-    groups[platform].push({
-        name: m.name, // The display name like "通义万相V1"
-        id: m.id,     // The full value like "tongyi:wanx-v1"
-    });
+    const [platform] = m.id.split(':', 2);
+    if (!groups[platform]) groups[platform] = [];
+    groups[platform].push({ name: m.name, id: m.id });
   }
   return groups;
 });
-
 
 const fetchModels = async () => {
   try {
@@ -197,13 +206,17 @@ const copyUrl = async () => {
   } catch (err) {
     console.error('复制链接失败: ', err);
     copyButtonText.value = '复制失败';
-    setTimeout(() => { copyButtonText.value = '复制链接'; }, 2000);
+     setTimeout(() => { copyButtonText.value = '复制链接'; }, 2000);
   }
 };
 
 const generateImage = () => {
   if (!prompt.value) {
     alert("请输入提示词！");
+    return;
+  }
+  if (sizeSelection.value === 'custom' && !customSize.value) {
+    alert("请输入自定义尺寸！");
     return;
   }
 
@@ -214,7 +227,7 @@ const generateImage = () => {
   const params = new URLSearchParams({
     prompt: prompt.value,
     model: model.value,
-    size: size.value,
+    size: finalSize.value, // 使用计算后的尺寸
     uploadToAlist: String(uploadToAlist.value)
   });
 
@@ -321,6 +334,10 @@ const generateImage = () => {
   background-position: right 0.9rem center;
   background-repeat: no-repeat;
   background-size: 1.25em;
+}
+
+.custom-size-input {
+  margin-top: 12px;
 }
 
 /* Alist 复选框 */

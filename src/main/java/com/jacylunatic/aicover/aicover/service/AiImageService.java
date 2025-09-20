@@ -90,7 +90,7 @@ public class AiImageService {
                         String warningMessage = "图片已生成，但上传到 Alist 失败: " + error.getMessage();
                         return Flux.just(
                             ProgressUpdate.error(warningMessage),
-                            ProgressUpdate.finalSuccess(tempUrl, "已回退并使用原始链接。")
+                            ProgressUpdate.finalSuccess(tempUrl, "图片已生成，但上传到 Alist 失败，已回退并使用原始链接。")
                         );
                     });
             });
