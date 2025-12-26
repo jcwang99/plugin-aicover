@@ -78,3 +78,5 @@ application-local.properties
 /ui/build/
 /workplace/
 /src/main/resources/console/
+REGISTRATION_EXPLANATION.md
+PLATFORM_ROUTING_EXPLANATION.md

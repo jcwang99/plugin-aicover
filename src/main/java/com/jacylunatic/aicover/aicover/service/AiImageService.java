@@ -1,6 +1,7 @@
 package com.jacylunatic.aicover.aicover.service;
 
 import com.jacylunatic.aicover.aicover.model.ProgressUpdate;
+import com.jacylunatic.aicover.aicover.service.generators.ModelScopeImageGenerator;
 import com.jacylunatic.aicover.aicover.service.generators.SiliconFlowImageGenerator;
 import com.jacylunatic.aicover.aicover.service.generators.TongyiImageGenerator;
 import jakarta.annotation.PostConstruct;
@@ -34,7 +35,8 @@ public class AiImageService {
     public void init() {
         this.imageGenerators = List.of(
             new TongyiImageGenerator(settingFetcher),
-            new SiliconFlowImageGenerator(settingFetcher)
+            new SiliconFlowImageGenerator(settingFetcher),
+            new ModelScopeImageGenerator(settingFetcher)
         );
 
         log.info("============================================================");

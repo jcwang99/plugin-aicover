@@ -3,7 +3,7 @@ package com.jacylunatic.aicover.aicover.model;
 import lombok.Data;
 
 /**
- * 专门用于承载硅基流动设置的数据类。
+ * 专门用于承载硅基流动设置的数据类。已作废
  */
 @Data
 public class SiliconFlowSetting {

@@ -3,8 +3,8 @@ package com.jacylunatic.aicover.aicover.service.generators;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jacylunatic.aicover.aicover.model.AiPlatformSettings;
 import com.jacylunatic.aicover.aicover.model.ProgressUpdate;
-import com.jacylunatic.aicover.aicover.model.SiliconFlowSetting;
 import com.jacylunatic.aicover.aicover.service.ImageGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,11 +32,13 @@ public class SiliconFlowImageGenerator implements ImageGenerator {
 
     @Override
     public Flux<ProgressUpdate> generateImage(String prompt, String model, String size) {
-        Mono<SiliconFlowSetting> settingMono = settingFetcher.fetch(SiliconFlowSetting.GROUP, SiliconFlowSetting.class)
-            .switchIfEmpty(Mono.just(new SiliconFlowSetting()));
+        // --- 核心改造：获取统一的 AI 平台设置 ---
+        Mono<AiPlatformSettings> settingMono = settingFetcher.fetch(AiPlatformSettings.GROUP, AiPlatformSettings.class)
+            .switchIfEmpty(Mono.just(new AiPlatformSettings()));
 
         return settingMono.flux().concatMap(setting -> {
-            String apiKey = setting.getApiKey();
+            // --- 核心改造：调用 siliconflowApiKey 的 getter ---
+            String apiKey = setting.getSiliconflowApiKey();
             if (apiKey == null || apiKey.isBlank()) {
                 return Flux.just(ProgressUpdate.error("未在插件设置中找到硅基流动的 API Key。"));
             }
@@ -55,6 +57,8 @@ public class SiliconFlowImageGenerator implements ImageGenerator {
         requestBody.put("model", model);
         requestBody.put("prompt", prompt);
         requestBody.put("image_size", formattedSize);
+
+        log.info("[SiliconFlow] Sending request to SiliconFlow API with body: {}", requestBody);
 
         return webClient.post()
             .uri(url)
@@ -75,12 +79,13 @@ public class SiliconFlowImageGenerator implements ImageGenerator {
             JsonNode urlNode = root.at("/images/0/url");
 
             if (urlNode.isMissingNode() || !urlNode.isTextual()) {
+                log.error("在硅基流动响应中未找到图片 URL。响应: {}", jsonResponse);
                 String errorMessage = root.at("/error/message").asText("无法从硅基流动响应中解析图片URL");
                 return Mono.just(ProgressUpdate.error(errorMessage));
             }
-            // --- 核心修正：使用 intermediateSuccess ---
-            return Mono.just(ProgressUpdate.intermediateSuccess(urlNode.asText(), "硅基流动绘图成功！"));
+            return Mono.just(ProgressUpdate.finalSuccess(urlNode.asText(), "硅基流动绘图成功！"));
         } catch (JsonProcessingException e) {
+            log.error("解析硅基流动响应 JSON 时出错", e);
             return Mono.just(ProgressUpdate.error("解析硅基流动响应失败: " + e.getMessage()));
         }
     }

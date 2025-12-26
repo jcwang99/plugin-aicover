@@ -3,8 +3,8 @@ package com.jacylunatic.aicover.aicover.service.generators;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jacylunatic.aicover.aicover.model.AiPlatformSettings;
 import com.jacylunatic.aicover.aicover.model.ProgressUpdate;
-import com.jacylunatic.aicover.aicover.model.TongyiSetting;
 import com.jacylunatic.aicover.aicover.service.ImageGenerator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,10 +35,12 @@ public class TongyiImageGenerator implements ImageGenerator {
 
     @Override
     public Flux<ProgressUpdate> generateImage(String prompt, String model, String size) {
-        Mono<String> apiKeyMono = settingFetcher.fetch(TongyiSetting.GROUP, TongyiSetting.class)
-            .switchIfEmpty(Mono.just(new TongyiSetting()))
+        // --- 核心改造：获取统一的 AI 平台设置 ---
+        Mono<String> apiKeyMono = settingFetcher.fetch(AiPlatformSettings.GROUP, AiPlatformSettings.class)
+            .switchIfEmpty(Mono.just(new AiPlatformSettings()))
             .flatMap(setting -> {
-                String apiKey = setting.getApiKey();
+                // --- 核心改造：调用 tongyiApiKey 的 getter ---
+                String apiKey = setting.getTongyiApiKey();
                 if (apiKey == null || apiKey.isBlank()) {
                     return Mono.error(new IllegalStateException("未在插件设置中找到通义万相的 API-KEY"));
                 }
@@ -54,6 +56,8 @@ public class TongyiImageGenerator implements ImageGenerator {
             )
         );
     }
+    
+    // ... (其余私有方法保持不变)
 
     private Mono<String> submitGenerationTask(String prompt, String model, String size, String apiKey) {
         String url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
@@ -85,7 +89,7 @@ public class TongyiImageGenerator implements ImageGenerator {
             .retryWhen(Retry.fixedDelay(60, Duration.ofSeconds(2))
                 .filter(error -> error instanceof PollAgainException)
                 .onRetryExhaustedThrow((retryBackoffSpec, retrySignal) ->
-                    new RuntimeException("图片生成超时，请稍后再试。")))
+                    new RuntimeException("图片生成超时（2分钟），请稍后再试。")))
             .flux();
     }
 
@@ -101,7 +105,6 @@ public class TongyiImageGenerator implements ImageGenerator {
                     if (urlNode.isMissingNode() || !urlNode.isTextual()) {
                         return Mono.just(ProgressUpdate.error("任务成功，但未在响应中找到图片 URL。"));
                     }
-                    // --- 核心修正：使用 intermediateSuccess ---
                     return Mono.just(ProgressUpdate.intermediateSuccess(urlNode.asText(), "AI 绘图成功！"));
                 case "FAILED":
                     String errorMessage = root.at("/output/message").asText("任务执行失败");
